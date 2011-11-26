@@ -1,0 +1,6 @@
+Testing Wiselib CoAP implementation
+
+Compile as the example_app
+
+Tested on Shawn (current implementation might need some small change to work 100%)
+Tested on iSense with Environmental Sensor Module
