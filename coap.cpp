@@ -80,7 +80,7 @@ public:
     // --------------------------------------------------------------------
     void simple_send( void* )
     {
-        char path[] = "temperature\0";
+        char path[] = "hello_world\0";
         block_data_t buf[100];
         uint8_t buf_len;
 
@@ -130,6 +130,9 @@ public:
     void add_test_resources()
     {
         uint8_t i = 0;
+        resources[i].reg_callback<CoapApplication, &CoapApplication::hello_world>(this);
+        resources[i].reg_resource("hello_world", 0, 12, TEXT_PLAIN);
+        i++;
         #ifdef SHAWN
             resources[i].reg_callback<CoapApplication, &CoapApplication::my_callback>(this);
             resources[i].reg_resource("temperature", 0, 4, TEXT_PLAIN);
@@ -148,6 +151,11 @@ public:
             resources[i++].init();
         }
 
+    }
+    char* hello_world(uint8_t i)
+    {
+        sprintf(test_, "%s", "hello world!");
+        return test_;
     }
     char * my_callback(uint8_t i)
     {
