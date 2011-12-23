@@ -1,6 +1,3 @@
-/*
- * Simple Wiselib Example
- */
 #include "external_interface/external_interface.h"
 #include "algorithms/routing/tree/tree_routing.h"
 // SENSORS
@@ -92,7 +89,7 @@ class CoapApplication:
          if ( em_->light_sensor()->enabled() )
          {
             if ( em_->light_sensor()->luminance() >= 20 )
-               em_->light_sensor()->enable_threshold_interrupt(true, 5);
+               em_->light_sensor()->enable_threshold_interrupt( true, 5 );
          }
       }
       // --------------------------------------------------------------------
@@ -130,8 +127,8 @@ class CoapApplication:
          packet.set_option( OBSERVE );
          packet.set_option( TOKEN );
 
-         packet.set_payload((uint8_t *)payload);
-         packet.set_payload_len(sizeof(payload));
+         packet.set_payload( ( uint8_t * )payload );
+         packet.set_payload_len( sizeof( payload ) );
          buf_len = packet.packet_to_buffer( buf );
 
          radio_->send( Os::Radio::BROADCAST_ADDRESS, buf_len, buf );
@@ -144,6 +141,7 @@ class CoapApplication:
          {
             //debug_->debug( "\n" );
             debug_->debug( "Node %x received msg from %x msg type: CoAP length: %d", radio_->id(), from, len );
+            debug_hex( buf, len );
             coap_.receiver( &len, buf, &from );
          }
       }
@@ -157,35 +155,41 @@ class CoapApplication:
             resources[i].init();
          }
          i = 0;
-         resources[i].set_method( GET );
-         resources[i].reg_callback<CoapApplication, &CoapApplication::resource_discovery>( this );
+         resources[i].set_method( 0, GET );
+         resources[i].reg_callback<CoapApplication, &CoapApplication::resource_discovery>( this, 0 );
          resources[i].reg_resource( ".well-known/core", false, 0, 1, APPLICATION_LINK_FORMAT );
          i++;
 #ifdef ISENSE
-         resources[i].set_method( GET );
-         resources[i].reg_callback<CoapApplication, &CoapApplication::get_temp>( this );
-         resources[i].reg_resource( "s/t", true, 1, 60, TEXT_PLAIN );
+         resources[i].set_method( 0, GET );
+         resources[i].reg_callback<CoapApplication, &CoapApplication::get_temp>( this, 0 );
+         resources[i].reg_resource( "sensors/temp", true, 120, 5, TEXT_PLAIN );
+         resources[i].set_method( 1, GET );
+         resources[i].set_method( 1, PUT );
+         resources[i].reg_callback<CoapApplication, &CoapApplication::temp_status>( this, 1 );
+         resources[i].reg_query( 1, "act=status" );
+         resources[i].set_method( 2, GET );
+         resources[i].set_method( 2, PUT );
+         resources[i].reg_callback<CoapApplication, &CoapApplication::threshold_hysteresis>( this, 2 );
+         resources[i].reg_query( 2, "act=th_hys" );
+         resources[i].set_method( 3, GET );
+         resources[i].set_method( 3, PUT );
+         resources[i].reg_callback<CoapApplication, &CoapApplication::change_observe_timer>( this, 3 );
+         resources[i].reg_query( 3, "act=observe" );
          temp_id = i;
          i++;
-         resources[i].set_method( GET );
-         resources[i].set_method( PUT );
-         resources[i].reg_callback<CoapApplication, &CoapApplication::temp_status>( this );
-         resources[i].reg_resource( "s/t/st", true, 0, 5, TEXT_PLAIN );
-         i++;
 
-         resources[i].set_method( GET );
-         resources[i].reg_callback<CoapApplication, &CoapApplication::get_light>( this );
-         resources[i].reg_resource( "s/l", true, 10*60, 1, TEXT_PLAIN );
+         resources[i].set_method( 0, GET );
+         resources[i].reg_callback<CoapApplication, &CoapApplication::get_light>( this, 0 );
+         resources[i].reg_resource( "sensors/light", true, 120, 5, TEXT_PLAIN );
+         resources[i].set_method( 1, GET );
+         resources[i].set_method( 1, PUT );
+         resources[i].reg_callback<CoapApplication, &CoapApplication::light_status>( this, 1 );
+         resources[i].reg_query( 1, "act=status" );
          light_id = i;
-         i++;
-         resources[i].set_method( GET );
-         resources[i].set_method( PUT );
-         resources[i].reg_callback<CoapApplication, &CoapApplication::light_status>( this );
-         resources[i].reg_resource( "s/l/st", true, 0, 5, TEXT_PLAIN );
          i++;
 #endif
       }
-      char* resource_discovery(uint8_t method)
+      char* resource_discovery( uint8_t method )
       {
          memset( data_, 0, sizeof( data_ ) );
          coap_.coap_resource_discovery( data_ );
@@ -198,31 +202,52 @@ class CoapApplication:
          //notify temperature change and change threshold
          //debug_->debug( "NEW TEMP: %d", value );
          coap_.coap_notify_from_interrupt( temp_id );
-         if (value > 0)
-            em_->temp_sensor()->set_threshold( value + 1, value - 1 );
+         //if ( value > 0 )
+            //em_->temp_sensor()->set_threshold( value + 1, value - 1 );
       }
       void handle_uint32_data( uint32 value )
       {
          //debug_->debug( "NEW LIGHT: %d", value );
          if ( value < 20 )
          {
-            em_->light_sensor()->enable_threshold_interrupt(false, 5);
+            //em_->light_sensor()->enable_threshold_interrupt( false, 5 );
             //em_->light_sensor()->enable_threshold_interrupt(true, 5);
          }
          coap_.coap_notify_from_interrupt( light_id );
       }
 #endif
-      char* get_temp(uint8_t method)
+      char* change_observe_timer( uint8_t method )
+      {
+         uint8_t* data = resources[temp_id].put_data_w();
+         uint8_t len = resources[temp_id].put_data_len_w();
+         uint16_t value = 0;
+         uint8_t i;
+         if ( method == GET )
+         {
+            sprintf(data_, "%d", resources[temp_id].notify_time_w());
+         }
+         if ( method == PUT )
+         {
+            for(i=0;i<len;i++)
+            {
+               value = value*10 + (data[i] - 0x30);
+            }
+            resources[temp_id].set_notify_time( value );
+            sprintf(data_, "set:%d", value);
+         }
+         return data_;
+      }
+      char* get_temp( uint8_t method )
       {
          int8_t temp = em_->temp_sensor()->temperature();
          debug_->debug( "temperature = %i °C", temp );
          sprintf( data_, "%d\0", temp );
          return data_;
       }
-      char* temp_status( uint8_t method)
+      char* temp_status( uint8_t method )
       {
          int8_t ret = -1;
-         uint8_t * data = resources[temp_id+1].put_data();
+         uint8_t * data = resources[temp_id].put_data_w();
          if ( method == GET )
          {
             ret = em_->temp_sensor()->enabled();
@@ -234,7 +259,7 @@ class CoapApplication:
             {
                ret = em_->temp_sensor()->enable();
             }
-            else if (*data == 0x30 )
+            else if ( *data == 0x30 )
             {
                ret = em_->temp_sensor()->disable();
             }
@@ -254,8 +279,46 @@ class CoapApplication:
          }
          return data_;
       }
+      char* threshold_hysteresis( uint8_t method )
+      {
+         //int8_t ret = -1;
+         int8_t input[2];
+         input[0] = 0;
+         input[1] = 0;
+         uint8_t* data = resources[temp_id].put_data_w();
+         uint8_t len = resources[temp_id].put_data_len_w();
+         uint8_t i;
+         uint8_t idx = 0;
+         if ( method == GET )
+         {
+            input[0] = em_->temp_sensor()->threshold();
+            input[1] = em_->temp_sensor()->hysteresis();
+            sprintf( data_, "%d %d", input[0], input[1] );
+            return data_;
+         }
+         if ( method == PUT )
+         {
 
-      char* get_light(uint8_t method)
+            for( i = 0; i < len; i++ )
+            {
+               if( data[i] >= 0x30 )
+               {
+                  input[idx] = input[idx] * 10 + ( data[i] - 0x30 );
+               }
+               else if( data[i] == 0x20 )
+               {
+                  idx++;
+               }
+            }
+            debug_->debug( "Threshold: %d, Hysteresis: %d", input[0], input[1] );
+            em_->temp_sensor()->set_threshold( input[0], input[1] );
+            sprintf( data_, "set:%d %d", input[0], input[1] );
+            return data_;
+         }
+         sprintf( data_, "error" );
+         return data_;
+      }
+      char* get_light( uint8_t method )
       {
          uint32_t lux = em_->light_sensor()->luminance();
          debug_->debug( "luminance = %d lux", lux );
@@ -263,10 +326,10 @@ class CoapApplication:
          return data_;
       }
 
-      char* light_status( uint8_t method)
+      char* light_status( uint8_t method )
       {
          int8_t ret = -1;
-         uint8_t * data = resources[light_id+1].put_data();
+         uint8_t * data = resources[light_id].put_data_w();
          if ( method == GET )
          {
             ret = em_->light_sensor()->enabled();
@@ -278,7 +341,7 @@ class CoapApplication:
             {
                ret = em_->light_sensor()->enable();
             }
-            else if (*data == 0x30 )
+            else if ( *data == 0x30 )
             {
                ret = em_->light_sensor()->disable();
             }
@@ -296,6 +359,19 @@ class CoapApplication:
             sprintf( data_, "error" );
          }
          return data_;
+      }
+      void debug_hex( const uint8_t * payload, size_t length )
+      {
+         char buffer[2048];
+         int bytes_written = 0;
+         bytes_written += sprintf( buffer + bytes_written, "DATA:!" );
+         for ( size_t i = 0; i < length; i++ )
+         {
+            bytes_written += sprintf( buffer + bytes_written, "%x!", payload[i] );
+         }
+         bytes_written += sprintf( buffer + bytes_written, "" );
+         buffer[bytes_written] = '\0';
+         debug_->debug( "%s", buffer );
       }
    private:
       Os::Radio::self_pointer_t radio_;
@@ -321,4 +397,3 @@ void application_main( Os::AppMainParameter& value )
 {
    coap_app.init( value );
 }
-
