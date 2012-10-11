@@ -1,399 +1,520 @@
 #include "external_interface/external_interface.h"
-#include "algorithms/routing/tree/tree_routing.h"
-// SENSORS
 #include "util/delegates/delegate.hpp"
 #include "util/pstl/map_static_vector.h"
 #include "util/pstl/static_string.h"
-//#include "util/wisebed_node_api/sensors/sensor_controller.h"
-//#include "util/wisebed_node_api/sensors/managed_sensor.h"
-// END OF SENSORS
+#include "algorithms/routing/tree/tree_routing.h"
+// SENSORS
+#undef CORE_COLLECTOR
+#undef WEATHER_COLLECTOR
+#undef ENVIRONMENTAL_COLLECTOR
+#undef SECURITY_COLLECTOR
+#undef SOLAP_COLLECTOR
+
+//Uncomment to enable the isense module
+#define CORE_COLLECTOR
+//#define ENVIRONMENTAL_COLLECTOR
+#define SECURITY_COLLECTOR
+//#define SOLAR_COLLECTOR
+//#define WEATHER_COLLECTOR
+//#define ND_COLLECTOR
+
+#ifdef CORE_COLLECTOR
+#include <isense/modules/core_module/core_module.h>
+#endif
+#ifdef ENVIRONMENTAL_COLLECTOR
+#include <isense/modules/environment_module/environment_module.h>
+#include <isense/modules/environment_module/temp_sensor.h>
+#include <isense/modules/environment_module/light_sensor.h>
+#endif
+#ifdef SOLAR_COLLECTOR
+#include <isense/modules/solar_module/solar_module.h>
+#endif
+#ifdef SECURITY_COLLECTOR
+#include <isense/modules/security_module/pir_sensor.h>
+#endif
+#ifdef WEATHER_COLLECTOR
+#include <isense/modules/cc_weather_module/ms55xx.h>
+#endif
+
 #include "algorithms/coap/coap.h"
 
-#ifdef ISENSE
-//#include "external_interface/isense/isense_light_sensor.h"
-//#include "external_interface/isense/isense_temp_sensor.h"
-#include "isense/modules/environment_module/environment_module.h"
-#include "isense/modules/environment_module/temp_sensor.h"
-#include "isense/modules/environment_module/light_sensor.h"
-#endif
+#define DEBUG_COAP
+
+#define TEMP_RESOURCE "temp"
+#define LIGHT_RESOURCE "light"
+#define PIR_RESOURCE "pir"
+
 
 typedef wiselib::OSMODEL Os;
 typedef Os::TxRadio Radio;
+typedef Radio::node_id_t node_id_t;
 typedef Radio::block_data_t block_data_t;
-typedef wiselib::Coap<Os, Radio, Os::Timer, Os::Debug, Os::Rand> coap_t;
 
-// --------------------------------------------------------------------------
-#ifdef ISENSE
-typedef isense::EnvironmentModule environment_module_t;
-typedef isense::TempSensor temp_sensor_t;
+typedef wiselib::iSenseExtendedTime<Os> ExtendedTime;
+typedef wiselib::iSenseClockModel<Os, ExtendedTime> Clock;
+
+typedef wiselib::Coap<Os, Radio, Os::Timer, Os::Debug, Os::Clock, Os::Rand, wiselib::StaticString> coap_t;
+
+
+class iSenseCoapCollectorApp:
+#ifdef SECURITY_COLLECTOR
+   public isense::SensorHandler,
 #endif
-// --------------------------------------------------------------------------
-class CoapApplication:
-#ifdef ISENSE
+#ifdef SOLAR_COLLECTOR
+   public isense::SleepHandler,
+#endif
    public isense::Uint32DataHandler,
    public isense::Int8DataHandler
-#endif
 {
    public:
-      void init( Os::AppMainParameter& value )
-      {
+
+      void init( Os::AppMainParameter& value ) {
+         ospointer = &value;
          radio_ = &wiselib::FacetProvider<Os, Os::Radio>::get_facet( value );
          timer_ = &wiselib::FacetProvider<Os, Os::Timer>::get_facet( value );
          debug_ = &wiselib::FacetProvider<Os, Os::Debug>::get_facet( value );
          rand_ = &wiselib::FacetProvider<Os, Os::Rand>::get_facet( value );
+         clock_ = &wiselib::FacetProvider<Os, Os::Clock>::get_facet( value );
 
-#ifdef SHAWN
-         mid_ = ( uint16_t )rand_->operator()( 65536 / 2 );
-         debug_->debug( "CoAP Application booting! %d", mid_ );
-         add_resources();
-         coap_.init( *radio_, *timer_, *debug_, mid_, resources );
-         radio_->reg_recv_callback<CoapApplication, &CoapApplication::receive_radio_message>( this );
-         if ( radio_->id() == 0 )
-            timer_->set_timer<CoapApplication, &CoapApplication::simple_send>( 2000, this, 0 );
+         radio_->set_channel( 12 );
+
+#ifdef CORE_COLLECTOR
+         cm_ = new isense::CoreModule( value );
 #endif
-#ifdef ISENSE
+#ifdef WEATHER_COLLECTOR
+         init_weather_module( value );
+#endif
+#ifdef SOLAR_COLLECTOR
+         init_solar_module( value );
+#endif
+#ifdef ENVIRONMENTAL_COLLECTOR
+         init_environmental_module( value );
+#endif
+#ifdef SECURITY_COLLECTOR
+         init_security_module( value );
+#endif
+
+
+#ifdef CORE_COLLECTOR
+         //send_reading( 0xffff, "led", 0 );
+         cm_->led_off();
+#endif
+         // coap init
          rand_->srand( radio_->id() );
-         mid_ = ( uint16_t )rand_->operator()( 65536 / 2 );
-         debug_->debug( "CoAP Application booting! %d", mid_ );
-         em_ = new isense::EnvironmentModule( value );
-         if ( em_ != NULL )
-         {
-            em_->enable( true );
-            if ( em_->light_sensor()->enable() )
-            {
-               light_sensor_ = true;
-               em_->light_sensor()->set_data_handler( this );
-               //os().add_task_in(Time(10, 0), this, (void*) TASK_SET_LIGHT_THRESHOLD);
-            }
-            if ( em_->temp_sensor()->enable() )
-            {
-               temp_sensor_ = true;
-               em_->temp_sensor()->set_data_handler( this );
-            }
-         }
+         mid_ = ( uint16_t ) rand_->operator()( 65536 / 2 );
+         debug_->debug( "iSense CoAP Collector App" );
          add_resources();
-         coap_.init( *radio_, *timer_, *debug_, mid_, resources );
-         radio_->reg_recv_callback<CoapApplication, &CoapApplication::receive_radio_message>( this );
-         if ( radio_->id() != 0xca3 )
-            timer_->set_timer<CoapApplication, &CoapApplication::init_thresholds>( 11000, this, 0 );
-         if ( radio_->id() == 0xca3 )
-            timer_->set_timer<CoapApplication, &CoapApplication::simple_send>( 10000, this, 0 );
-#endif
+         coap_.init( *radio_, *timer_, *debug_, *clock_, mid_ );
+         radio_->reg_recv_callback<iSenseCoapCollectorApp, &iSenseCoapCollectorApp::receive_radio_message > ( this );
       }
-      void init_thresholds( void * )
-      {
-         if ( em_->temp_sensor()->enabled() )
-         {
+#ifdef ENVIRONMENTAL_COLLECTOR
+      void init_thresholds( void * ) {
+         if ( em_->temp_sensor()->enabled() ) {
             em_->temp_sensor()->set_threshold( em_->temp_sensor()->temperature() + 1, em_->temp_sensor()->temperature() - 1 );
          }
-         if ( em_->light_sensor()->enabled() )
-         {
+         if ( em_->light_sensor()->enabled() ) {
             if ( em_->light_sensor()->luminance() >= 20 )
                em_->light_sensor()->enable_threshold_interrupt( true, 5 );
          }
       }
       // --------------------------------------------------------------------
-      void simple_send( void* )
-      {
-         char path[] = "s/t/st\0";
-         char payload[] = "0";
-         block_data_t buf[100];
-         uint8_t buf_len;
-
-#ifdef SHAWN
-         //uint16_t host = 1;
 #endif
-#ifdef ISENSE
-         uint16_t host = 0x9979;
-#endif
-         uint8_t token[8];
-         token[0] = 0xc1;
-         token[1] = 0x45;
-         token[2] = 0xaf;
-         packet.init();
-         packet.set_type( CON );
-         packet.set_code( PUT );
-         packet.set_mid( mid_++ );
-
-         packet.set_uri_host( host );
-         packet.set_uri_path_len( sizeof( path ) - 1 );
-         packet.set_uri_path( path );
-         packet.set_observe( 0 );
-         packet.set_token_len( 3 );
-         packet.set_token( token );
-
-         packet.set_option( URI_HOST );
-         packet.set_option( URI_PATH );
-         packet.set_option( OBSERVE );
-         packet.set_option( TOKEN );
-
-         packet.set_payload( ( uint8_t * )payload );
-         packet.set_payload_len( sizeof( payload ) );
-         buf_len = packet.packet_to_buffer( buf );
-
-         radio_->send( Os::Radio::BROADCAST_ADDRESS, buf_len, buf );
-         //timer_->set_timer<CoapApplication, &CoapApplication::simple_send>( 30000, this, 0 );
-      }
-      // --------------------------------------------------------------------
-      void receive_radio_message( Os::Radio::node_id_t from, Os::Radio::size_t len, Os::Radio::block_data_t *buf )
-      {
-         if ( buf[0] == WISELIB_MID_COAP )
-         {
-            //debug_->debug( "\n" );
+      void receive_radio_message( Os::Radio::node_id_t from, Os::Radio::size_t len, Os::Radio::block_data_t *buf ) {
+         if ( buf[0] == WISELIB_MID_COAP ) {
             debug_->debug( "Node %x received msg from %x msg type: CoAP length: %d", radio_->id(), from, len );
+#ifdef DEBUG_COAP
             debug_hex( buf, len );
+#endif
             coap_.receiver( &len, buf, &from );
+         }
+         else if ( buf[0] == 0x7f && buf[1] == 0x69 && buf[2] == 112 && buf[3] == WISELIB_MID_COAP ) {
+            debug_->debug( "Node %x received msg from %x msg type: CoAP length: %d", radio_->id(), from, len );
+#ifdef DEBUG_COAP
+            debug_hex( buf, len );
+#endif
+            coap_.receiver( &len, &buf[3], &from );
          }
       }
 
       void add_resources()
       {
-         uint8_t i;
-         // reg_resource(name, fast_response, observable_time - zero for non observable, expected_len, content_type )
-         for( i = 0; i < CONF_MAX_RESOURCES; i++ )
-         {
-            resources[i].init();
-         }
-         i = 0;
-         resources[i].set_method( 0, GET );
-         resources[i].reg_callback<CoapApplication, &CoapApplication::resource_discovery>( this, 0 );
-         resources[i].reg_resource( ".well-known/core", false, 0, 1, APPLICATION_LINK_FORMAT );
-         i++;
-#ifdef ISENSE
-         resources[i].set_method( 0, GET );
-         resources[i].reg_callback<CoapApplication, &CoapApplication::get_temp>( this, 0 );
-         resources[i].reg_resource( "sensors/temp", true, 120, 5, TEXT_PLAIN );
-         resources[i].set_method( 1, GET );
-         resources[i].set_method( 1, PUT );
-         resources[i].reg_callback<CoapApplication, &CoapApplication::temp_status>( this, 1 );
-         resources[i].reg_query( 1, "act=status" );
-         resources[i].set_method( 2, GET );
-         resources[i].set_method( 2, PUT );
-         resources[i].reg_callback<CoapApplication, &CoapApplication::threshold_hysteresis>( this, 2 );
-         resources[i].reg_query( 2, "act=th_hys" );
-         resources[i].set_method( 3, GET );
-         resources[i].set_method( 3, PUT );
-         resources[i].reg_callback<CoapApplication, &CoapApplication::change_observe_timer>( this, 3 );
-         resources[i].reg_query( 3, "act=observe" );
-         temp_id = i;
-         i++;
+#ifdef ENVIRONMENTAL_COLLECTOR
+         resource_t new_resource( TEMP_RESOURCE, GET, true, 120, TEXT_PLAIN );
+         new_resource.reg_callback<iSenseCoapCollectorApp, &iSenseCoapCollectorApp::get_temp>( this );
+         coap_.add_resource( new_resource );
 
-         resources[i].set_method( 0, GET );
-         resources[i].reg_callback<CoapApplication, &CoapApplication::get_light>( this, 0 );
-         resources[i].reg_resource( "sensors/light", true, 120, 5, TEXT_PLAIN );
-         resources[i].set_method( 1, GET );
-         resources[i].set_method( 1, PUT );
-         resources[i].reg_callback<CoapApplication, &CoapApplication::light_status>( this, 1 );
-         resources[i].reg_query( 1, "act=status" );
-         light_id = i;
-         i++;
+         resource_t new_resource2( LIGHT_RESOURCE, GET, true, 60, TEXT_PLAIN );
+         new_resource2.reg_callback<iSenseCoapCollectorApp, &iSenseCoapCollectorApp::get_light>( this );
+         coap_.add_resource( new_resource2 );
 #endif
+
+#ifdef WEATHER_MODULE
+         resource_t new_resource3( "temp", GET, true, 120, TEXT_PLAIN );
+         new_resource3.reg_callback<iSenseCoapCollectorApp, &iSenseCoapCollectorApp::get_weather_temp>( this );
+         coap_.add_resource( new_resource3 );
+
+         resource_t new_resource4( "bpressure", GET, true, 60, TEXT_PLAIN );
+         new_resource4.reg_callback<iSenseCoapCollectorApp, &iSenseCoapCollectorApp::get_weather_bar>( this );
+         coap_.add_resource( new_resource4 );
+#endif
+
+#ifdef SOLAR_MODULE
+         resource_t new_resource5( "capacity", GET, true, 120, TEXT_PLAIN );
+         new_resource5.reg_callback<iSenseCoapCollectorApp, &iSenseCoapCollectorApp::solar_charge>( this );
+         coap_.add_resource( new_resource5 );
+
+         resource_t new_resource6( "voltage", GET, true, 60, TEXT_PLAIN );
+         new_resource6.reg_callback<iSenseCoapCollectorApp, &iSenseCoapCollectorApp::solar_voltage>( this );
+         coap_.add_resource( new_resource6 );
+
+         resource_t new_resource7( "current", GET, true, 120, TEXT_PLAIN );
+         new_resource7.reg_callback<iSenseCoapCollectorApp, &iSenseCoapCollectorApp::solar_current>( this );
+         coap_.add_resource( new_resource7 );
+
+         resource_t new_resource8( "duty_cycle", GET, true, 60, TEXT_PLAIN );
+         new_resource8.reg_callback<iSenseCoapCollectorApp, &iSenseCoapCollectorApp::solar_duty_cycle>( this );
+         coap_.add_resource( new_resource8 );
+#endif
+
+#ifdef SECURITY_COLLECTOR
+         resource_t new_resource9( PIR_RESOURCE, GET, true, 10, TEXT_PLAIN );
+         new_resource9.reg_callback<iSenseCoapCollectorApp, &iSenseCoapCollectorApp::security_pir>( this );
+         coap_.add_resource( new_resource9 );
+#endif
+         resource_t hello_resource( "hello_world", GET, true, 0, TEXT_PLAIN );
+         hello_resource.reg_callback<iSenseCoapCollectorApp, &iSenseCoapCollectorApp::hello>( this );
+         coap_.add_resource( hello_resource );
+
       }
-      char* resource_discovery( uint8_t method )
-      {
-         memset( data_, 0, sizeof( data_ ) );
-         coap_.coap_resource_discovery( data_ );
-         //debug_->debug("CPP: %x - %s", data_, data_);
-         return data_;
-      }
-#ifdef ISENSE
-      void handle_int8_data( int8 value )
-      {
+
+      void handle_int8_data( int8 value ) {
          //notify temperature change and change threshold
          //debug_->debug( "NEW TEMP: %d", value );
-         coap_.coap_notify_from_interrupt( temp_id );
+         ///coap_.coap_notify_from_interrupt( temp_id );
          //if ( value > 0 )
-            //em_->temp_sensor()->set_threshold( value + 1, value - 1 );
+         //em_->temp_sensor()->set_threshold( value + 1, value - 1 );
       }
-      void handle_uint32_data( uint32 value )
-      {
+
+      void handle_uint32_data( uint32 value ) {
          //debug_->debug( "NEW LIGHT: %d", value );
-         if ( value < 20 )
-         {
+         if ( value < 20 ) {
             //em_->light_sensor()->enable_threshold_interrupt( false, 5 );
             //em_->light_sensor()->enable_threshold_interrupt(true, 5);
          }
-         coap_.coap_notify_from_interrupt( light_id );
+         ///coap_.coap_notify_from_interrupt( light_id );
+      }
+
+#ifdef ENVIRONMENTAL_COLLECTOR
+
+      /**
+       * Initializes the Environmental Sensor Module
+       * @param value pointer to os
+       */
+      void init_environmental_module( Os::AppMainParameter& value ) {
+         em_ = new isense::EnvironmentModule( value );
+         if ( em_ != NULL ) {
+            em_->enable( true );
+            if ( em_->light_sensor()->enable() ) {
+               em_->light_sensor()->set_data_handler( this );
+               //os().add_task_in(Time(10, 0), this, (void*) TASK_SET_LIGHT_THRESHOLD);
+               debug_->debug( "em light" );
+            }
+            if ( em_->temp_sensor()->enable() ) {
+               em_->temp_sensor()->set_data_handler( this );
+               debug_->debug( "em temp" );
+            }
+         }
       }
 #endif
-      char* change_observe_timer( uint8_t method )
-      {
-         uint8_t* data = resources[temp_id].put_data_w();
-         uint8_t len = resources[temp_id].put_data_len_w();
-         uint16_t value = 0;
-         uint8_t i;
-         if ( method == GET )
-         {
-            sprintf(data_, "%d", resources[temp_id].notify_time_w());
+
+#ifdef SECURITY_COLLECTOR
+
+      /**
+       * Initializes the Security Sensor Module
+       * @param value pointer to os
+       */
+      void init_security_module( Os::AppMainParameter & value ) {
+         pir_timestamp_ = clock_->time();
+         pir_ = new isense::PirSensor( value );
+         pir_->set_sensor_handler( this );
+         pir_->set_pir_sensor_int_interval( 2000 );
+         if ( pir_->enable() ) {
+            pir_sensor_ = true;
+            debug_->debug( "id::%x em pir", radio_->id() );
          }
-         if ( method == PUT )
-         {
-            for(i=0;i<len;i++)
-            {
-               value = value*10 + (data[i] - 0x30);
-            }
-            resources[temp_id].set_notify_time( value );
-            sprintf(data_, "set:%d", value);
-         }
-         return data_;
+
+         //        accelerometer_ = new isense::LisAccelerometer(value);
+         //        if (accelerometer_ != NULL) {
+         //            accelerometer_->set_mode(MODE_THRESHOLD);
+         //            accelerometer_->set_threshold(25);
+         //            accelerometer_->set_handler(this);
+         //            accelerometer_->enable();
+         //        }
       }
-      char* get_temp( uint8_t method )
-      {
-         int8_t temp = em_->temp_sensor()->temperature();
-         debug_->debug( "temperature = %i °C", temp );
-         sprintf( data_, "%d\0", temp );
-         return data_;
+#endif
+
+#ifdef WEATHER_COLLECTOR
+
+      /**
+       * Initializes the Weather Sensor Module
+       * @param value pointer to os
+       */
+      void init_weather_module( Os::AppMainParameter& value ) {
+         ms_ = new isense::Ms55xx( value );
       }
-      char* temp_status( uint8_t method )
-      {
-         int8_t ret = -1;
-         uint8_t * data = resources[temp_id].put_data_w();
-         if ( method == GET )
-         {
-            ret = em_->temp_sensor()->enabled();
+#endif
+
+#ifdef SOLAR_COLLECTOR
+      void init_solar_module( Os::AppMainParameter& value ) {
+         debug_->debug( "init_solar_module" );
+         // create SolarModule instance
+         sm_ = new isense::SolarModule( value );
+
+         // if allocation of SolarModule was successful
+         if ( sm_ != NULL ) {
+            debug_->debug( "not null" );
+            // read out the battery state
+            isense::BatteryState bs = sm_->battery_state();
+            // estimate battery charge from the battery voltage
+            uint32 charge = sm_->estimate_charge( bs.voltage );
+            // set the estimated battery charge
+            sm_->set_battery_charge( charge );
+            debug_->debug( "initialized" );
 
          }
-         else if ( method == PUT )
-         {
-            if ( *data == 0x31 )
-            {
-               ret = em_->temp_sensor()->enable();
-            }
-            else if ( *data == 0x30 )
-            {
-               ret = em_->temp_sensor()->disable();
-            }
 
-         }
-         if ( ret == true )
-         {
-            sprintf( data_, "true" );
-         }
-         else if ( ret == false )
-         {
-            sprintf( data_, "false" );
-         }
-         else
-         {
-            sprintf( data_, "error" );
-         }
-         return data_;
       }
-      char* threshold_hysteresis( uint8_t method )
-      {
-         //int8_t ret = -1;
-         int8_t input[2];
-         input[0] = 0;
-         input[1] = 0;
-         uint8_t* data = resources[temp_id].put_data_w();
-         uint8_t len = resources[temp_id].put_data_len_w();
-         uint8_t i;
-         uint8_t idx = 0;
-         if ( method == GET )
-         {
-            input[0] = em_->temp_sensor()->threshold();
-            input[1] = em_->temp_sensor()->hysteresis();
-            sprintf( data_, "%d %d", input[0], input[1] );
-            return data_;
-         }
-         if ( method == PUT )
-         {
+#endif
 
-            for( i = 0; i < len; i++ )
-            {
-               if( data[i] >= 0x30 )
-               {
-                  input[idx] = input[idx] * 10 + ( data[i] - 0x30 );
-               }
-               else if( data[i] == 0x20 )
-               {
-                  idx++;
-               }
-            }
-            debug_->debug( "Threshold: %d, Hysteresis: %d", input[0], input[1] );
-            em_->temp_sensor()->set_threshold( input[0], input[1] );
-            sprintf( data_, "set:%d %d", input[0], input[1] );
-            return data_;
+#ifdef ENVIRONMENTAL_COLLECTOR
+      coap_status_t get_temp( uint8_t method, uint8_t* input_data, size_t input_data_len, uint8_t* output_data, uint8_t* output_data_len ) {
+         if( method == COAP_GET )  {
+            //int temp = 0;
+            int8_t temp = em_->temp_sensor()->temperature();
+            debug_->debug( "temperature = %i °C", temp );
+            *output_data_len = sprintf( ( char* )output_data, "%d\0" , temp );
+            return CONTENT;
          }
-         sprintf( data_, "error" );
-         return data_;
+         return INTERNAL_SERVER_ERROR;
       }
-      char* get_light( uint8_t method )
-      {
-         uint32_t lux = em_->light_sensor()->luminance();
-         debug_->debug( "luminance = %d lux", lux );
-         sprintf( data_, "%d\0", lux );
-         return data_;
+      coap_status_t get_light( uint8_t method, uint8_t* input_data, size_t input_data_len, uint8_t* output_data, uint8_t* output_data_len ) {
+         if( method == COAP_GET ) {
+            uint32_t lux = em_->light_sensor()->luminance();
+            debug_->debug( "luminance = %d lux", lux );
+            *output_data_len = sprintf( ( char* )output_data, "%d\0", lux );
+            return CONTENT;
+         }
+         return INTERNAL_SERVER_ERROR;
+      }
+#endif
+
+#ifdef WEATHER_COLLECTOR
+      coap_status_t get_weather_temp( uint8_t method, uint8_t* input_data, size_t input_data_len, uint8_t* output_data, uint8_t* output_data_len ) {
+         if( method == COAP_GET ) {
+            ms_ = new isense::Ms55xx( *ospointer );
+            ms_->reset();
+            int16 temp = ms_->get_temperature();
+            *output_data_len = sprintf( ( char* )output_data, "%d\0" , temp / 10 );
+            return CONTENT;
+         }
+         return INTERNAL_SERVER_ERROR;
+      }
+      coap_status_t get_weather_bar( uint8_t method, uint8_t* input_data, size_t input_data_len, uint8_t* output_data, uint8_t* output_data_len ) {
+         if( method == COAP_GET ) {
+            ms_ = new isense::Ms55xx( *ospointer );
+            ms_->reset();
+            int16 bpressure = ms_->read_pressure();
+            *output_data_len = sprintf( ( char* )output_data, "%d\0" , bpressure / 10 );
+            return CONTENT;
+         }
+         return INTERNAL_SERVER_ERROR;
+      }
+#endif
+
+#ifdef SOLAR_COLLECTOR
+      coap_status_t solar_charge( uint8_t method, uint8_t* input_data, size_t input_data_len, uint8_t* output_data, uint8_t* output_data_len ) {
+         if( method == COAP_GET ) {
+            isense::BatteryState bs = sm_->control();
+            duty_cycle( bs );
+            *output_data_len = sprintf( ( char* )output_data, "%d\0" , bs.capacity );
+            return CONTENT;
+         }
+         return INTERNAL_SERVER_ERROR;
+      }
+      coap_status_t solar_voltage( uint8_t method, uint8_t* input_data, size_t input_data_len, uint8_t* output_data, uint8_t* output_data_len ) {
+         if( method == COAP_GET ) {
+            isense::BatteryState bs = sm_->control();
+            duty_cycle( bs );
+            *output_data_len = sprintf( ( char* )output_data, "%d\0" , bs.voltage );
+            return CONTENT;
+         }
+         return INTERNAL_SERVER_ERROR;
+      }
+      coap_status_t solar_current( uint8_t method, uint8_t* input_data, size_t input_data_len, uint8_t* output_data, uint8_t* output_data_len ) {
+         if( method == COAP_GET ) {
+            isense::BatteryState bs = sm_->control();
+            duty_cycle( bs );
+            *output_data_len = sprintf( ( char* )output_data, "%d\0" , bs.current );
+            return CONTENT;
+         }
+         return INTERNAL_SERVER_ERROR;
+      }
+      coap_status_t solar_duty_cycle( uint8_t method, uint8_t* input_data, size_t input_data_len, uint8_t* output_data, uint8_t* output_data_len ) {
+         if( method == COAP_GET ) {
+            isense::BatteryState bs = sm_->control();
+            duty_cycle( bs );
+            *output_data_len = sprintf( ( char* )output_data, "%d\0" , duty_cycle_ );
+            return CONTENT;
+         }
+         return INTERNAL_SERVER_ERROR;
+      }
+#endif
+
+#ifdef SECURITY_COLLECTOR
+      coap_status_t security_pir( uint8_t method, uint8_t* input_data, size_t input_data_len, uint8_t* output_data, uint8_t* output_data_len ) {
+         if( method == COAP_GET ) {
+            uint8_t ret_val;
+            Clock::time_t diff = clock_->time() - pir_timestamp_;
+            debug_->debug( "%d", clock_->seconds( diff ) );
+            if ( clock_->seconds( diff ) < 10 )
+            {
+               ret_val = 1;
+            }
+            else
+            {
+               ret_val = 0;
+            }
+            *output_data_len = sprintf( ( char* )output_data, "%d\0" , ret_val );
+            return CONTENT;
+         }
+         return INTERNAL_SERVER_ERROR;
+      }
+#endif
+      coap_status_t hello( uint8_t method, uint8_t* input_data, size_t input_data_len, uint8_t* output_data, uint8_t* output_data_len ) {
+         if( method == COAP_GET ) {
+            *output_data_len = sprintf( ( char* )output_data, "hello from %x device!\0", radio_->id() );
+            return CONTENT;
+         }
+         return INTERNAL_SERVER_ERROR;
       }
 
-      char* light_status( uint8_t method )
-      {
-         int8_t ret = -1;
-         uint8_t * data = resources[light_id].put_data_w();
-         if ( method == GET )
-         {
-            ret = em_->light_sensor()->enabled();
-
-         }
-         else if ( method == PUT )
-         {
-            if ( *data == 0x31 )
-            {
-               ret = em_->light_sensor()->enable();
-            }
-            else if ( *data == 0x30 )
-            {
-               ret = em_->light_sensor()->disable();
-            }
-         }
-         if ( ret == true )
-         {
-            sprintf( data_, "true" );
-         }
-         else if ( ret == false )
-         {
-            sprintf( data_, "false" );
-         }
-         else
-         {
-            sprintf( data_, "error" );
-         }
-         return data_;
+      bool stand_by( void ) {
+         return true;
       }
-      void debug_hex( const uint8_t * payload, size_t length )
-      {
+
+      //----------------------------------------------------------------------------
+
+      bool hibernate( void ) {
+         return false;
+      }
+
+      //----------------------------------------------------------------------------
+
+      void wake_up( bool memory_held ) {
+      }
+#ifdef DEBUG_COAP
+
+      void debug_hex( const uint8_t * payload, size_t length ) {
          char buffer[2048];
          int bytes_written = 0;
          bytes_written += sprintf( buffer + bytes_written, "DATA:!" );
-         for ( size_t i = 0; i < length; i++ )
-         {
+         for ( size_t i = 0; i < length; i++ ) {
             bytes_written += sprintf( buffer + bytes_written, "%x!", payload[i] );
          }
          bytes_written += sprintf( buffer + bytes_written, "" );
          buffer[bytes_written] = '\0';
          debug_->debug( "%s", buffer );
       }
+#endif
+
+#ifdef SOLAR_COLLECTOR
+      void duty_cycle( isense::BatteryState bs )
+      {
+         if ( bs.charge < 50000 ) {
+            // battery nearly empty -->
+            // set ultra-low duty cycle
+            // live ~20 days
+            duty_cycle_ = 1; // 0.1%
+         } else if ( bs.capacity < 1000000 ) //1 Ah or less
+         {
+            //live approx. 9 days out of 1Ah
+            // and then another 20 days at 0.1% duty cycle
+            duty_cycle_ = 100;
+         } else if ( bs.capacity < 3000000 ) //3Ah or less
+         {
+            // live approx. 6 days out of 1Ah
+            // and then another 9 days at 10% duty cycle
+            // and then another 20 days at 0.1% duty cycle
+            duty_cycle_ = 300; // 30%
+         } else if ( bs.capacity < 5000000/*2Ah*/ ) {
+            // live approx. 4 days out of 2Ah
+            // and then another 6 days at 30%
+            // and then another 9 days at 10% duty cycle
+            // and then another 20 days at 0.1% duty cycle
+            duty_cycle_ = 500; // 50%
+         } else {
+            // live approx. 1.5 days out of 1.4Ah
+            // and then another 4 days at 40%
+            // and then another 6 days at 30%
+            // and then another 9 days at 10% duty cycle
+            // and then another 20 days at 0.1% duty cycle
+            duty_cycle_ = 880; // 88%
+         }
+      }
+#endif
+
+#ifdef SECURITY_COLLECTOR
+      /**
+           * Handles a new Pir Event
+           * Reports the Reading to the Gateway
+           */
+      virtual void handle_sensor() {
+         debug_->debug( "pir event" );
+         pir_timestamp_ = clock_->time();
+         coap_.coap_notify_from_interrupt( PIR_RESOURCE );
+      }
+#endif
    private:
       Os::Radio::self_pointer_t radio_;
       Os::Timer::self_pointer_t timer_;
       Os::Debug::self_pointer_t debug_;
+      Os::Clock::self_pointer_t clock_;
       Os::Rand::self_pointer_t rand_;
       coap_t coap_;
-      coap_packet_t packet;
-      resource_t resources[CONF_MAX_RESOURCES];
       uint16_t mid_;
 
-      char data_[128];
-#ifdef ISENSE
-      environment_module_t* em_;
-      bool temp_sensor_, light_sensor_;
-      uint8_t temp_id, light_id;
+      bool pir_sensor_;
+      Os::AppMainParameter* ospointer;
+#ifdef ND_COLLECTOR
+      nb_t nb_;
 #endif
+#ifdef ENVIRONMENTAL_COLLECTOR
+      isense::EnvironmentModule* em_;
+#endif
+#ifdef SECURITY_COLLECTOR
+      isense::PirSensor* pir_;
+      //    isense::LisAccelerometer* accelerometer_;
+      Clock::time_t pir_timestamp_;
+#endif
+#ifdef WEATHER_COLLECTOR
+      isense::Ms55xx* ms_;
+#endif
+#ifdef SOLAR_COLLECTOR
+      isense::SolarModule* sm_;
+      uint16_t duty_cycle_;
+#endif
+#ifdef CORE_COLLECTOR
+      isense::CoreModule* cm_;
+#endif
+
+      //environment_module_t* em_;
+      //bool temp_sensor_, light_sensor_;
+      //uint8_t temp_id, light_id;
 };
 // --------------------------------------------------------------------------
-wiselib::WiselibApplication<Os, CoapApplication> coap_app;
+wiselib::WiselibApplication<Os, iSenseCoapCollectorApp> coap_app;
 // --------------------------------------------------------------------------
-void application_main( Os::AppMainParameter& value )
-{
+
+void application_main( Os::AppMainParameter& value ) {
    coap_app.init( value );
 }
