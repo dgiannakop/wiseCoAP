@@ -13,7 +13,7 @@
 //Uncomment to enable the isense module
 #define CORE_COLLECTOR
 //#define ENVIRONMENTAL_COLLECTOR
-#define SECURITY_COLLECTOR
+//#define SECURITY_COLLECTOR
 //#define SOLAR_COLLECTOR
 //#define WEATHER_COLLECTOR
 //#define ND_COLLECTOR
@@ -185,6 +185,10 @@ class iSenseCoapCollectorApp:
          hello_resource.reg_callback<iSenseCoapCollectorApp, &iSenseCoapCollectorApp::hello>( this );
          coap_.add_resource( hello_resource );
 
+         resource_t large_resource( "large", GET, true, 0, TEXT_PLAIN );
+         large_resource.reg_callback<iSenseCoapCollectorApp, &iSenseCoapCollectorApp::large>( this );
+         coap_.add_resource( large_resource );
+
       }
 
       void handle_int8_data( int8 value ) {
@@ -287,7 +291,7 @@ class iSenseCoapCollectorApp:
 #endif
 
 #ifdef ENVIRONMENTAL_COLLECTOR
-      coap_status_t get_temp( uint8_t method, uint8_t* input_data, size_t input_data_len, uint8_t* output_data, uint8_t* output_data_len ) {
+      coap_status_t get_temp( uint8_t method, uint8_t* input_data, size_t input_data_len, uint8_t* output_data, uint16_t* output_data_len ) {
          if( method == COAP_GET )  {
             //int temp = 0;
             int8_t temp = em_->temp_sensor()->temperature();
@@ -297,7 +301,7 @@ class iSenseCoapCollectorApp:
          }
          return INTERNAL_SERVER_ERROR;
       }
-      coap_status_t get_light( uint8_t method, uint8_t* input_data, size_t input_data_len, uint8_t* output_data, uint8_t* output_data_len ) {
+      coap_status_t get_light( uint8_t method, uint8_t* input_data, size_t input_data_len, uint8_t* output_data, uint16_t* output_data_len ) {
          if( method == COAP_GET ) {
             uint32_t lux = em_->light_sensor()->luminance();
             debug_->debug( "luminance = %d lux", lux );
@@ -309,7 +313,7 @@ class iSenseCoapCollectorApp:
 #endif
 
 #ifdef WEATHER_COLLECTOR
-      coap_status_t get_weather_temp( uint8_t method, uint8_t* input_data, size_t input_data_len, uint8_t* output_data, uint8_t* output_data_len ) {
+      coap_status_t get_weather_temp( uint8_t method, uint8_t* input_data, size_t input_data_len, uint8_t* output_data, uint16_t* output_data_len ) {
          if( method == COAP_GET ) {
             ms_ = new isense::Ms55xx( *ospointer );
             ms_->reset();
@@ -319,7 +323,7 @@ class iSenseCoapCollectorApp:
          }
          return INTERNAL_SERVER_ERROR;
       }
-      coap_status_t get_weather_bar( uint8_t method, uint8_t* input_data, size_t input_data_len, uint8_t* output_data, uint8_t* output_data_len ) {
+      coap_status_t get_weather_bar( uint8_t method, uint8_t* input_data, size_t input_data_len, uint8_t* output_data, uint16_t* output_data_len ) {
          if( method == COAP_GET ) {
             ms_ = new isense::Ms55xx( *ospointer );
             ms_->reset();
@@ -332,7 +336,7 @@ class iSenseCoapCollectorApp:
 #endif
 
 #ifdef SOLAR_COLLECTOR
-      coap_status_t solar_charge( uint8_t method, uint8_t* input_data, size_t input_data_len, uint8_t* output_data, uint8_t* output_data_len ) {
+      coap_status_t solar_charge( uint8_t method, uint8_t* input_data, size_t input_data_len, uint8_t* output_data, uint16_t* output_data_len ) {
          if( method == COAP_GET ) {
             isense::BatteryState bs = sm_->control();
             duty_cycle( bs );
@@ -341,7 +345,7 @@ class iSenseCoapCollectorApp:
          }
          return INTERNAL_SERVER_ERROR;
       }
-      coap_status_t solar_voltage( uint8_t method, uint8_t* input_data, size_t input_data_len, uint8_t* output_data, uint8_t* output_data_len ) {
+      coap_status_t solar_voltage( uint8_t method, uint8_t* input_data, size_t input_data_len, uint8_t* output_data, uint16_t* output_data_len ) {
          if( method == COAP_GET ) {
             isense::BatteryState bs = sm_->control();
             duty_cycle( bs );
@@ -350,7 +354,7 @@ class iSenseCoapCollectorApp:
          }
          return INTERNAL_SERVER_ERROR;
       }
-      coap_status_t solar_current( uint8_t method, uint8_t* input_data, size_t input_data_len, uint8_t* output_data, uint8_t* output_data_len ) {
+      coap_status_t solar_current( uint8_t method, uint8_t* input_data, size_t input_data_len, uint8_t* output_data, uint16_t* output_data_len ) {
          if( method == COAP_GET ) {
             isense::BatteryState bs = sm_->control();
             duty_cycle( bs );
@@ -359,7 +363,7 @@ class iSenseCoapCollectorApp:
          }
          return INTERNAL_SERVER_ERROR;
       }
-      coap_status_t solar_duty_cycle( uint8_t method, uint8_t* input_data, size_t input_data_len, uint8_t* output_data, uint8_t* output_data_len ) {
+      coap_status_t solar_duty_cycle( uint8_t method, uint8_t* input_data, size_t input_data_len, uint8_t* output_data, uint16_t* output_data_len ) {
          if( method == COAP_GET ) {
             isense::BatteryState bs = sm_->control();
             duty_cycle( bs );
@@ -371,7 +375,7 @@ class iSenseCoapCollectorApp:
 #endif
 
 #ifdef SECURITY_COLLECTOR
-      coap_status_t security_pir( uint8_t method, uint8_t* input_data, size_t input_data_len, uint8_t* output_data, uint8_t* output_data_len ) {
+      coap_status_t security_pir( uint8_t method, uint8_t* input_data, size_t input_data_len, uint8_t* output_data, uint16_t* output_data_len ) {
          if( method == COAP_GET ) {
             uint8_t ret_val;
             Clock::time_t diff = clock_->time() - pir_timestamp_;
@@ -390,9 +394,19 @@ class iSenseCoapCollectorApp:
          return INTERNAL_SERVER_ERROR;
       }
 #endif
-      coap_status_t hello( uint8_t method, uint8_t* input_data, size_t input_data_len, uint8_t* output_data, uint8_t* output_data_len ) {
+      coap_status_t hello( uint8_t method, uint8_t* input_data, size_t input_data_len, uint8_t* output_data, uint16_t* output_data_len ) {
          if( method == COAP_GET ) {
             *output_data_len = sprintf( ( char* )output_data, "hello from %x device!\0", radio_->id() );
+            return CONTENT;
+         }
+         return INTERNAL_SERVER_ERROR;
+      }
+
+      coap_status_t large( uint8_t method, uint8_t* input_data, size_t input_data_len, uint8_t* output_data, uint16_t* output_data_len ) {
+         if( method == COAP_GET ) {
+            *output_data_len = sprintf( ( char* )output_data, "This is a large resource just to test the blockwise response. The text that follows is from LOTR.\n\nTheoden: Where is the horse and the rider? Where is the horn that was blowing? They have passed like rain on the mountain, like wind in the meadow. The days have gone down in the West behind the hills into shadow. How did it come to this?\n\n" );
+            *output_data_len += sprintf( (char* )(output_data + *output_data_len), "Aragorn: Hold your ground, hold your ground! Sons of Gondor, of Rohan, my brothers! I see in your eyes the same fear that would take the heart of me. A day may come when the courage of men fails, when we forsake our friends and break all bonds of fellowship, but it is not this day. An hour of woes and shattered shields, when the age of men comes crashing down! But it is not this day! This day we fight! By all that you hold dear on this good Earth, I bid you *stand, Men of the West!*\0");
+            debug_->debug("Large len %d", *output_data_len);
             return CONTENT;
          }
          return INTERNAL_SERVER_ERROR;
