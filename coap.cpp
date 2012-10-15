@@ -18,6 +18,8 @@
 //#define WEATHER_COLLECTOR
 //#define ND_COLLECTOR
 
+//#define I_AM_ALIVE
+
 #ifdef CORE_COLLECTOR
 #include <isense/modules/core_module/core_module.h>
 #endif
@@ -106,6 +108,11 @@ class iSenseCoapCollectorApp:
          add_resources();
          coap_.init( *radio_, *timer_, *debug_, *clock_, mid_ );
          radio_->reg_recv_callback<iSenseCoapCollectorApp, &iSenseCoapCollectorApp::receive_radio_message > ( this );
+
+#ifdef I_AM_ALIVE
+         timer_->set_timer<iSenseCoapCollectorApp, &iSenseCoapCollectorApp::broadcast>(60000, this, 0);
+         alive_broadcast_ = true;
+#endif
       }
 #ifdef ENVIRONMENTAL_COLLECTOR
       void init_thresholds( void * ) {
@@ -185,10 +192,16 @@ class iSenseCoapCollectorApp:
          hello_resource.reg_callback<iSenseCoapCollectorApp, &iSenseCoapCollectorApp::hello>( this );
          coap_.add_resource( hello_resource );
 
+#ifdef I_AM_ALIVE
+         resource_t alive_resource( "alive", GET | POST, true, 0, TEXT_PLAIN );
+         alive_resource.reg_callback<iSenseCoapCollectorApp, &iSenseCoapCollectorApp::alive_broadcast>( this );
+         coap_.add_resource( alive_resource );
+#endif
+/*
          resource_t large_resource( "large", GET, true, 0, TEXT_PLAIN );
          large_resource.reg_callback<iSenseCoapCollectorApp, &iSenseCoapCollectorApp::large>( this );
          coap_.add_resource( large_resource );
-
+*/
       }
 
       void handle_int8_data( int8 value ) {
@@ -402,6 +415,34 @@ class iSenseCoapCollectorApp:
          return INTERNAL_SERVER_ERROR;
       }
 
+#ifdef I_AM_ALIVE
+      coap_status_t alive_broadcast( uint8_t method, uint8_t* input_data, size_t input_data_len, uint8_t* output_data, uint16_t* output_data_len ) {
+         if( method == COAP_GET ) {
+            if ( alive_broadcast_ == true )
+               *output_data_len = sprintf( ( char* )output_data, "I am alive message is sent every 60s (to disable POST:0)" );
+            else
+               *output_data_len = sprintf( ( char* )output_data, "I am alive message is disabled (to enable POST:1)" );
+            return CONTENT;
+         }
+         else if ( method == COAP_POST ) {
+            if ( (*input_data == 0x30) && (alive_broadcast_ == true) )
+            {
+               alive_broadcast_ = 0;
+               *output_data_len = sprintf( ( char* )output_data, "I am alive message disabled" );
+               return CHANGED;
+            }
+            else if ( (*input_data == 0x31) && (alive_broadcast_ == false))
+            {
+               alive_broadcast_ = 1;
+               *output_data_len = sprintf( ( char* )output_data, "I am alive message enabled" );
+               return CHANGED;
+            }
+            return NOT_IMPLEMENTED;
+         }
+         return INTERNAL_SERVER_ERROR;
+      }
+#endif
+
       coap_status_t large( uint8_t method, uint8_t* input_data, size_t input_data_len, uint8_t* output_data, uint16_t* output_data_len ) {
          if( method == COAP_GET ) {
             *output_data_len = sprintf( ( char* )output_data, "This is a large resource just to test the blockwise response. The text that follows is from LOTR.\n\nTheoden: Where is the horse and the rider? Where is the horn that was blowing? They have passed like rain on the mountain, like wind in the meadow. The days have gone down in the West behind the hills into shadow. How did it come to this?\n\n" );
@@ -426,6 +467,25 @@ class iSenseCoapCollectorApp:
 
       void wake_up( bool memory_held ) {
       }
+
+#ifdef I_AM_ALIVE
+      void broadcast( void* )
+      {
+         if (alive_broadcast_ == true)
+         {
+            debug_->debug("** I AM ALIVE **");
+            block_data_t buf[CONF_MAX_MSG_LEN];
+            buf[0] = 0x7f;
+            buf[1] = 0x69;
+            buf[2] = 112;
+            buf[3] = WISELIB_MID_COAP;
+            buf[4] = 1;
+            radio_->send(Os::Radio::BROADCAST_ADDRESS, 5 , buf);
+         }
+         timer_->set_timer<iSenseCoapCollectorApp, &iSenseCoapCollectorApp::broadcast>(60000, this, 0);
+      }
+#endif
+
 #ifdef DEBUG_COAP
 
       void debug_hex( const uint8_t * payload, size_t length ) {
@@ -496,9 +556,11 @@ class iSenseCoapCollectorApp:
       Os::Rand::self_pointer_t rand_;
       coap_t coap_;
       uint16_t mid_;
-
       bool pir_sensor_;
       Os::AppMainParameter* ospointer;
+#ifdef I_AM_ALIVE
+      bool alive_broadcast_;
+#endif
 #ifdef ND_COLLECTOR
       nb_t nb_;
 #endif
