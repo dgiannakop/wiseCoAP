@@ -18,7 +18,10 @@
 //#define WEATHER_COLLECTOR
 //#define ND_COLLECTOR
 
+//Uncomment to enable resources
+#define HELLO_RESOURCE
 //#define I_AM_ALIVE
+//#define LARGE_RESOURCE
 
 #ifdef CORE_COLLECTOR
 #include <isense/modules/core_module/core_module.h>
@@ -188,20 +191,22 @@ class iSenseCoapCollectorApp:
          new_resource9.reg_callback<iSenseCoapCollectorApp, &iSenseCoapCollectorApp::security_pir>( this );
          coap_.add_resource( new_resource9 );
 #endif
+
+#ifdef HELLO_RESOURCE
          resource_t hello_resource( "hello_world", GET, true, 0, TEXT_PLAIN );
          hello_resource.reg_callback<iSenseCoapCollectorApp, &iSenseCoapCollectorApp::hello>( this );
          coap_.add_resource( hello_resource );
-
+#endif
 #ifdef I_AM_ALIVE
          resource_t alive_resource( "alive", GET | POST, true, 0, TEXT_PLAIN );
          alive_resource.reg_callback<iSenseCoapCollectorApp, &iSenseCoapCollectorApp::alive_broadcast>( this );
          coap_.add_resource( alive_resource );
 #endif
-/*
+#ifdef LARGE_RESOURCE
          resource_t large_resource( "large", GET, true, 0, TEXT_PLAIN );
          large_resource.reg_callback<iSenseCoapCollectorApp, &iSenseCoapCollectorApp::large>( this );
          coap_.add_resource( large_resource );
-*/
+#endif
       }
 
       void handle_int8_data( int8 value ) {
@@ -407,6 +412,7 @@ class iSenseCoapCollectorApp:
          return INTERNAL_SERVER_ERROR;
       }
 #endif
+#ifdef HELLO_RESOURCE
       coap_status_t hello( uint8_t method, uint8_t* input_data, size_t input_data_len, uint8_t* output_data, uint16_t* output_data_len ) {
          if( method == COAP_GET ) {
             *output_data_len = sprintf( ( char* )output_data, "hello from %x device!\0", radio_->id() );
@@ -414,7 +420,7 @@ class iSenseCoapCollectorApp:
          }
          return INTERNAL_SERVER_ERROR;
       }
-
+#endif
 #ifdef I_AM_ALIVE
       coap_status_t alive_broadcast( uint8_t method, uint8_t* input_data, size_t input_data_len, uint8_t* output_data, uint16_t* output_data_len ) {
          if( method == COAP_GET ) {
@@ -442,7 +448,7 @@ class iSenseCoapCollectorApp:
          return INTERNAL_SERVER_ERROR;
       }
 #endif
-
+#ifdef LARGE_RESOURCE
       coap_status_t large( uint8_t method, uint8_t* input_data, size_t input_data_len, uint8_t* output_data, uint16_t* output_data_len ) {
          if( method == COAP_GET ) {
             *output_data_len = sprintf( ( char* )output_data, "This is a large resource just to test the blockwise response. The text that follows is from LOTR.\n\nTheoden: Where is the horse and the rider? Where is the horn that was blowing? They have passed like rain on the mountain, like wind in the meadow. The days have gone down in the West behind the hills into shadow. How did it come to this?\n\n" );
@@ -452,7 +458,7 @@ class iSenseCoapCollectorApp:
          }
          return INTERNAL_SERVER_ERROR;
       }
-
+#endif
       bool stand_by( void ) {
          return true;
       }
