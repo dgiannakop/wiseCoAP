@@ -2,7 +2,8 @@
 #include "util/delegates/delegate.hpp"
 #include "util/pstl/map_static_vector.h"
 #include "util/pstl/static_string.h"
-#include "algorithms/routing/tree/tree_routing.h"
+//#include "algorithms/routing/tree/tree_routing.h"
+#include "algorithms/routing/flooding/flooding_algorithm.h"
 // SENSORS
 #undef CORE_COLLECTOR
 #undef WEATHER_COLLECTOR
@@ -18,7 +19,7 @@
 //#define WEATHER_COLLECTOR
 
 //Uncomment to enable resources
-//#define HELLO_RESOURCE
+#define HELLO_RESOURCE
 //#define I_AM_ALIVE
 //#define LARGE_RESOURCE
 //#define URI_QUERY_TEST
@@ -48,17 +49,13 @@
 #define TEMP_RESOURCE "temp"
 #define LIGHT_RESOURCE "light"
 #define PIR_RESOURCE "pir"
-
-
-typedef wiselib::OSMODEL Os;
-typedef Os::TxRadio Radio;
-typedef Radio::node_id_t node_id_t;
-typedef Radio::block_data_t block_data_t;
+#define TASK_SLEEP 1
+#define TASK_WAKE 2
 
 typedef wiselib::iSenseExtendedTime<Os> ExtendedTime;
 typedef wiselib::iSenseClockModel<Os, ExtendedTime> Clock;
 
-typedef wiselib::Coap<Os, Radio, Os::Timer, Os::Debug, Os::Clock, Os::Rand, wiselib::StaticString> coap_t;
+typedef wiselib::Coap<Os, flooding_algorithm_t, Os::Timer, Os::Debug, Os::Clock, Os::Rand, wiselib::StaticString> coap_t;
 
 
 class iSenseCoapCollectorApp:
@@ -99,12 +96,26 @@ class iSenseCoapCollectorApp:
 #ifdef SECURITY_COLLECTOR
          init_security_module( value );
 #endif
+
+#ifdef SOLAR_COLLECTOR
+        //debug_->debug("set timer");
+        ((isense::Os *) ospointer)->allow_sleep(false);
+
+        ((isense::Os *) ospointer)->allow_doze(false);
+
+        timer_->set_timer<iSenseCoapCollectorApp, &iSenseCoapCollectorApp::read_solar_sensors > (5000, this, (void*) TASK_WAKE);
+#endif
+         //flooding algorithm init
+         flooding_.init( *radio_, *debug_ );
+         flooding_.enable_radio();
+         flooding_.reg_recv_callback<iSenseCoapCollectorApp, &iSenseCoapCollectorApp::receive_flooding_message>( this );
+
          // coap init
          rand_->srand( radio_->id() );
          mid_ = ( uint16_t ) rand_->operator()( 65536 / 2 );
          debug_->debug( "iSense CoAP Collector App" );
          add_resources();
-         coap_.init( *radio_, *timer_, *debug_, *clock_, mid_ );
+         coap_.init( &flooding_, *timer_, *debug_, *clock_, mid_ );
          radio_->reg_recv_callback<iSenseCoapCollectorApp, &iSenseCoapCollectorApp::receive_radio_message > ( this );
 
 #ifdef I_AM_ALIVE
@@ -124,6 +135,15 @@ class iSenseCoapCollectorApp:
       }
       // --------------------------------------------------------------------
 #endif
+      void receive_flooding_message( Os::Radio::node_id_t from, Os::Radio::size_t len, Os::Radio::block_data_t *buf )
+      {
+         debug_->debug( "received flooding at %x from %x with length: %d", radio_->id(), from, len );
+         if ( buf[0] == WISELIB_MID_COAP ) {
+            debug_->debug( "Received CoAP message from iSense: %x with length: %d", from, len );
+            coap_.receiver( &len, buf, &from );
+         }
+         //coap_.receiver( &len, buf, &from );
+      }
       void receive_radio_message( Os::Radio::node_id_t from, Os::Radio::size_t len, Os::Radio::block_data_t *buf ) {
          if ( buf[0] == WISELIB_MID_COAP ) {
             debug_->debug( "Received CoAP message from iSense: %x with length: %d", from, len );
@@ -143,27 +163,27 @@ class iSenseCoapCollectorApp:
 
       void add_resources()
       {
-/*
-         uint16_t i = 0;
-         char namez[3];
-         for(i=0; i<26; i++)
-         {
-            debug_->debug("%d",i);
-            namez[0] = 0x41 + i;
-            namez[1] = '\0';
-            resource_t resource( namez, "test", GET, true, 0, TEXT_PLAIN);
-            coap_.add_resource( resource);
-         }
-         for(i=0; i<CONF_MAX_RESOURCES-26; i++)
-         {
-            debug_->debug("%d",i);
-            namez[0] = 0x41;
-            namez[1] = 0x41 + i;
-            namez[2] = '\0';
-            resource_t resource( namez, "test", GET, true, 0, TEXT_PLAIN);
-            coap_.add_resource( resource);
-         }
-*/
+         /*
+                  uint16_t i = 0;
+                  char namez[3];
+                  for(i=0; i<26; i++)
+                  {
+                     debug_->debug("%d",i);
+                     namez[0] = 0x41 + i;
+                     namez[1] = '\0';
+                     resource_t resource( namez, "test", GET, true, 0, TEXT_PLAIN);
+                     coap_.add_resource( resource);
+                  }
+                  for(i=0; i<CONF_MAX_RESOURCES-26; i++)
+                  {
+                     debug_->debug("%d",i);
+                     namez[0] = 0x41;
+                     namez[1] = 0x41 + i;
+                     namez[2] = '\0';
+                     resource_t resource( namez, "test", GET, true, 0, TEXT_PLAIN);
+                     coap_.add_resource( resource);
+                  }
+         */
 #ifdef CORE_COLLECTOR
          resource_t core_resource( "led", GET | POST, true, 0, TEXT_PLAIN );
          core_resource.reg_callback<iSenseCoapCollectorApp, &iSenseCoapCollectorApp::led>( this );
@@ -312,14 +332,14 @@ class iSenseCoapCollectorApp:
 
          // if allocation of SolarModule was successful
          if ( sm_ != NULL ) {
-            debug_->debug( "not null" );
+            //debug_->debug( "not null" );
             // read out the battery state
             isense::BatteryState bs = sm_->battery_state();
             // estimate battery charge from the battery voltage
             uint32 charge = sm_->estimate_charge( bs.voltage );
             // set the estimated battery charge
             sm_->set_battery_charge( charge );
-            debug_->debug( "initialized" );
+            //debug_->debug( "initialized" );
 
          }
 
@@ -398,7 +418,7 @@ class iSenseCoapCollectorApp:
       coap_status_t solar_charge( callback_arg_t* args ) {
          if( args->method == COAP_GET ) {
             isense::BatteryState bs = sm_->control();
-            duty_cycle( bs );
+            //duty_cycle( bs );
             *args->output_data_len = sprintf( ( char* )args->output_data, "%d\0" , bs.capacity );
             return CONTENT;
          }
@@ -407,7 +427,7 @@ class iSenseCoapCollectorApp:
       coap_status_t solar_voltage( callback_arg_t* args ) {
          if( args->method == COAP_GET ) {
             isense::BatteryState bs = sm_->control();
-            duty_cycle( bs );
+            //duty_cycle( bs );
             *args->output_data_len = sprintf( ( char* )args->output_data, "%d\0" , bs.voltage );
             return CONTENT;
          }
@@ -416,7 +436,7 @@ class iSenseCoapCollectorApp:
       coap_status_t solar_current( callback_arg_t* args ) {
          if( args->method == COAP_GET ) {
             isense::BatteryState bs = sm_->control();
-            duty_cycle( bs );
+            //duty_cycle( bs );
             *args->output_data_len = sprintf( ( char* )args->output_data, "%d\0" , bs.current );
             return CONTENT;
          }
@@ -424,8 +444,8 @@ class iSenseCoapCollectorApp:
       }
       coap_status_t solar_duty_cycle( callback_arg_t* args ) {
          if( args->method == COAP_GET ) {
-            isense::BatteryState bs = sm_->control();
-            duty_cycle( bs );
+            //isense::BatteryState bs = sm_->control();
+            //duty_cycle( bs );
             *args->output_data_len = sprintf( ( char* )args->output_data, "%d\0" , duty_cycle_ );
             return CONTENT;
          }
@@ -466,22 +486,22 @@ class iSenseCoapCollectorApp:
       coap_status_t alive_broadcast( callback_arg_t* args ) {
          if( args->method == COAP_GET ) {
             if ( alive_broadcast_ == true )
-               *(args->output_data_len) = sprintf( ( char* )args->output_data, "I am alive message is sent every 60s (to disable POST:0)" );
+               *( args->output_data_len ) = sprintf( ( char* )args->output_data, "I am alive message is sent every 60s (to disable POST:0)" );
             else
-               *(args->output_data_len) = sprintf( ( char* )args->output_data, "I am alive message is disabled (to enable POST:1)" );
+               *( args->output_data_len ) = sprintf( ( char* )args->output_data, "I am alive message is disabled (to enable POST:1)" );
             return CONTENT;
          }
          else if ( args->method == COAP_POST ) {
-            if ( ( *(args->input_data) == 0x30 ) && ( alive_broadcast_ == true ) )
+            if ( ( *( args->input_data ) == 0x30 ) && ( alive_broadcast_ == true ) )
             {
                alive_broadcast_ = 0;
-               *(args->output_data_len) = sprintf( ( char* )args->output_data, "I am alive message disabled" );
+               *( args->output_data_len ) = sprintf( ( char* )args->output_data, "I am alive message disabled" );
                return CHANGED;
             }
             else if ( ( *args->input_data == 0x31 ) && ( alive_broadcast_ == false ) )
             {
                alive_broadcast_ = 1;
-               *(args->output_data_len) = sprintf( ( char* )args->output_data, "I am alive message enabled" );
+               *( args->output_data_len ) = sprintf( ( char* )args->output_data, "I am alive message enabled" );
                return CHANGED;
             }
             return NOT_IMPLEMENTED;
@@ -492,8 +512,8 @@ class iSenseCoapCollectorApp:
 #ifdef LARGE_RESOURCE
       coap_status_t large( callback_arg_t* args ) {
          if( args->method == COAP_GET ) {
-            *(args->output_data_len) = sprintf( ( char* )args->output_data, "This is a large resource just to test the blockwise response. The text that follows is from LOTR.\n\nTheoden: Where is the horse and the rider? Where is the horn that was blowing? They have passed like rain on the mountain, like wind in the meadow. The days have gone down in the West behind the hills into shadow. How did it come to this?\n\n" );
-            *(args->output_data_len) += sprintf( ( char* )( args->output_data + *(args->output_data_len) ), "Aragorn: Hold your ground, hold your ground! Sons of Gondor, of Rohan, my brothers! I see in your eyes the same fear that would take the heart of me. A day may come when the courage of men fails, when we forsake our friends and break all bonds of fellowship, but it is not this day. An hour of woes and shattered shields, when the age of men comes crashing down! But it is not this day! This day we fight! By all that you hold dear on this good Earth, I bid you *stand, Men of the West!*\0" );
+            *( args->output_data_len ) = sprintf( ( char* )args->output_data, "This is a large resource just to test the blockwise response. The text that follows is from LOTR.\n\nTheoden: Where is the horse and the rider? Where is the horn that was blowing? They have passed like rain on the mountain, like wind in the meadow. The days have gone down in the West behind the hills into shadow. How did it come to this?\n\n" );
+            *( args->output_data_len ) += sprintf( ( char* )( args->output_data + *( args->output_data_len ) ), "Aragorn: Hold your ground, hold your ground! Sons of Gondor, of Rohan, my brothers! I see in your eyes the same fear that would take the heart of me. A day may come when the courage of men fails, when we forsake our friends and break all bonds of fellowship, but it is not this day. An hour of woes and shattered shields, when the age of men comes crashing down! But it is not this day! This day we fight! By all that you hold dear on this good Earth, I bid you *stand, Men of the West!*\0" );
             return CONTENT;
          }
          return INTERNAL_SERVER_ERROR;
@@ -502,7 +522,7 @@ class iSenseCoapCollectorApp:
 #ifdef URI_QUERY_TEST
       coap_status_t uri_query( callback_arg_t* args ) {
          if( args->method == COAP_GET ) {
-            if ( strcmp(args->uri_queries->value_of("act"), "0") == 0 )
+            if ( strcmp( args->uri_queries->value_of( "act" ), "0" ) == 0 )
                *( args->output_data_len ) = sprintf( ( char* )args->output_data, "URI QUERY is working" );
             else
                *( args->output_data_len ) = sprintf( ( char* )args->output_data, "Wrong URI QUERY, act=0 is the right." );
@@ -515,20 +535,15 @@ class iSenseCoapCollectorApp:
          return true;
       }
 
-      //----------------------------------------------------------------------------
-
       bool hibernate( void ) {
          return false;
       }
-
-      //----------------------------------------------------------------------------
 
       void wake_up( bool memory_held ) {
       }
 
 #ifdef I_AM_ALIVE
-      void broadcast( void* )
-      {
+      void broadcast( void* ) {
          if ( alive_broadcast_ == true )
          {
             debug_->debug( "** I AM ALIVE **" );
@@ -545,7 +560,6 @@ class iSenseCoapCollectorApp:
 #endif
 
 #ifdef DEBUG_COAP
-
       void debug_hex( const uint8_t * payload, size_t length ) {
          char buffer[2048];
          int bytes_written = 0;
@@ -560,37 +574,61 @@ class iSenseCoapCollectorApp:
 #endif
 
 #ifdef SOLAR_COLLECTOR
-      void duty_cycle( isense::BatteryState bs )
-      {
-         if ( bs.charge < 50000 ) {
-            // battery nearly empty -->
-            // set ultra-low duty cycle
-            // live ~20 days
-            duty_cycle_ = 1; // 0.1%
-         } else if ( bs.capacity < 1000000 ) //1 Ah or less
-         {
-            //live approx. 9 days out of 1Ah
-            // and then another 20 days at 0.1% duty cycle
-            duty_cycle_ = 100;
-         } else if ( bs.capacity < 3000000 ) //3Ah or less
-         {
-            // live approx. 6 days out of 1Ah
-            // and then another 9 days at 10% duty cycle
-            // and then another 20 days at 0.1% duty cycle
-            duty_cycle_ = 300; // 30%
-         } else if ( bs.capacity < 5000000/*2Ah*/ ) {
-            // live approx. 4 days out of 2Ah
-            // and then another 6 days at 30%
-            // and then another 9 days at 10% duty cycle
-            // and then another 20 days at 0.1% duty cycle
-            duty_cycle_ = 500; // 50%
-         } else {
-            // live approx. 1.5 days out of 1.4Ah
-            // and then another 4 days at 40%
-            // and then another 6 days at 30%
-            // and then another 9 days at 10% duty cycle
-            // and then another 20 days at 0.1% duty cycle
-            duty_cycle_ = 880; // 88%
+      void read_solar_sensors( void* userdata ) {
+         debug_->debug( "read_solar_sensors" );
+         if ( ( uint32 ) userdata == TASK_WAKE ) {
+            // register as a task to wake up again in one minute
+            // the below call equals calling
+            // add_task_in(Time(60,0), this, (void*)TASK_WAKE);
+            timer_->set_timer<iSenseCoapCollectorApp, &iSenseCoapCollectorApp::read_solar_sensors > ( 60000, this, ( void* ) TASK_WAKE );
+
+            //initiate control cycle, and read out battery state
+            isense::BatteryState bs = sm_->control();
+
+            // prevent sleeping to keep node awake
+            ( ( isense::Os * ) ospointer )->allow_sleep( false );
+            //            ospointer->allow_sleep(false);
+
+            // adopt duty cycle to the remaining battery charge
+            if ( bs.charge < 50000 ) {
+               // battery nearly empty -->
+               // set ultra-low duty cycle
+               // live ~20 days
+               duty_cycle_ = 1; // 0.1%
+            } else if ( bs.capacity < 1000000 ) //1 Ah or less
+            {
+               //live approx. 9 days out of 1Ah
+               // and then another 20 days at 0.1% duty cycle
+               duty_cycle_ = 100;
+            } else if ( bs.capacity < 3000000 ) //3Ah or less
+            {
+               // live approx. 6 days out of 1Ah
+               // and then another 9 days at 10% duty cycle
+               // and then another 20 days at 0.1% duty cycle
+               duty_cycle_ = 300; // 30%
+            } else if ( bs.capacity < 5000000/*2Ah*/ ) {
+               // live approx. 4 days out of 2Ah
+               // and then another 6 days at 30%
+               // and then another 9 days at 10% duty cycle
+               // and then another 20 days at 0.1% duty cycle
+               duty_cycle_ = 500; // 50%
+            } else {
+               // live approx. 1.5 days out of 1.4Ah
+               // and then another 4 days at 40%
+               // and then another 6 days at 30%
+               // and then another 9 days at 10% duty cycle
+               // and then another 20 days at 0.1% duty cycle
+               duty_cycle_ = 880; // 88%
+            }
+            // add task to allow sleeping again
+            timer_->set_timer<iSenseCoapCollectorApp, &iSenseCoapCollectorApp::read_solar_sensors > ( duty_cycle_ * 60000, this, ( void* ) TASK_SLEEP );
+
+            // output battery state and duty cycle
+            //            os().debug("voltage=%dmV, charge=%iuAh -> duty cycle=%d, current=%i",                    , , , );
+         } else if ( ( uint32 ) userdata == TASK_SLEEP ) {
+            // allow sleeping again
+            ( ( isense::Os * ) ospointer )->allow_sleep( true );
+            //            os().allow_sleep(true);
          }
       }
 #endif
@@ -612,6 +650,7 @@ class iSenseCoapCollectorApp:
       Os::Debug::self_pointer_t debug_;
       Os::Clock::self_pointer_t clock_;
       Os::Rand::self_pointer_t rand_;
+      flooding_algorithm_t flooding_;
       coap_t coap_;
       uint16_t mid_;
       bool pir_sensor_;
@@ -638,10 +677,6 @@ class iSenseCoapCollectorApp:
       isense::SolarModule* sm_;
       uint16_t duty_cycle_;
 #endif
-
-      //environment_module_t* em_;
-      //bool temp_sensor_, light_sensor_;
-      //uint8_t temp_id, light_id;
 };
 // --------------------------------------------------------------------------
 wiselib::WiselibApplication<Os, iSenseCoapCollectorApp> coap_app;
