@@ -4,14 +4,14 @@
 #include "util/pstl/static_string.h"
 #include "algorithms/routing/tree/tree_routing.h"
 // SENSORS
-#undef CORE_MODULE
+#undef CORE_COLLECTOR
 #undef WEATHER_COLLECTOR
 #undef ENVIRONMENTAL_COLLECTOR
 #undef SECURITY_COLLECTOR
 #undef SOLAP_COLLECTOR
 
 //Uncomment to enable the isense module
-//#define CORE_MODULE
+//#define CORE_COLLECTOR
 //#define ENVIRONMENTAL_COLLECTOR
 //#define SECURITY_COLLECTOR
 //#define SOLAR_COLLECTOR
@@ -21,6 +21,7 @@
 //#define HELLO_RESOURCE
 //#define I_AM_ALIVE
 //#define LARGE_RESOURCE
+//#define URI_QUERY_TEST
 
 #ifdef CORE_COLLECTOR
 #include <isense/modules/core_module/core_module.h>
@@ -163,7 +164,7 @@ class iSenseCoapCollectorApp:
             coap_.add_resource( resource);
          }
 */
-#ifdef CORE_MODULE
+#ifdef CORE_COLLECTOR
          resource_t core_resource( "led", GET | POST, true, 0, TEXT_PLAIN );
          core_resource.reg_callback<iSenseCoapCollectorApp, &iSenseCoapCollectorApp::led>( this );
          coap_.add_resource( core_resource );
@@ -226,6 +227,11 @@ class iSenseCoapCollectorApp:
          resource_t large_resource( "large", GET, true, 0, TEXT_PLAIN );
          large_resource.reg_callback<iSenseCoapCollectorApp, &iSenseCoapCollectorApp::large>( this );
          coap_.add_resource( large_resource );
+#endif
+#ifdef URI_QUERY_TEST
+         resource_t query_resource( "uri_query", GET, true, 0, TEXT_PLAIN );
+         query_resource.reg_callback<iSenseCoapCollectorApp, &iSenseCoapCollectorApp::uri_query>( this );
+         coap_.add_resource( query_resource );
 #endif
       }
 
@@ -320,7 +326,7 @@ class iSenseCoapCollectorApp:
       }
 #endif
 
-#ifdef CORE_MODULE
+#ifdef CORE_COLLECTOR
       coap_status_t led( callback_arg_t* args ) {
          if( args->method == COAP_GET ) {
             *( args->output_data_len ) = sprintf( ( char* )args->output_data, "%d", led_status_ );
@@ -493,6 +499,18 @@ class iSenseCoapCollectorApp:
          return INTERNAL_SERVER_ERROR;
       }
 #endif
+#ifdef URI_QUERY_TEST
+      coap_status_t uri_query( callback_arg_t* args ) {
+         if( args->method == COAP_GET ) {
+            if ( strcmp(args->uri_queries->value_of("act"), "0") == 0 )
+               *( args->output_data_len ) = sprintf( ( char* )args->output_data, "URI QUERY is working" );
+            else
+               *( args->output_data_len ) = sprintf( ( char* )args->output_data, "Wrong URI QUERY, act=0 is the right." );
+            return CONTENT;
+         }
+         return INTERNAL_SERVER_ERROR;
+      }
+#endif
       bool stand_by( void ) {
          return true;
       }
@@ -601,7 +619,7 @@ class iSenseCoapCollectorApp:
 #ifdef I_AM_ALIVE
       bool alive_broadcast_;
 #endif
-#ifdef CORE_MODULE
+#ifdef CORE_COLLECTOR
       isense::CoreModule* cm_;
       uint8_t led_status_;
 #endif
