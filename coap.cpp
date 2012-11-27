@@ -13,14 +13,14 @@
 
 //Uncomment to enable the isense module
 //#define CORE_COLLECTOR
-//#define ENVIRONMENTAL_COLLECTOR
+#define ENVIRONMENTAL_COLLECTOR
 //#define SECURITY_COLLECTOR
 //#define SOLAR_COLLECTOR
 //#define WEATHER_COLLECTOR
 
 //Uncomment to enable resources
-#define HELLO_RESOURCE
-//#define I_AM_ALIVE
+//#define HELLO_RESOURCE
+#define I_AM_ALIVE
 //#define LARGE_RESOURCE
 //#define URI_QUERY_TEST
 
@@ -45,6 +45,11 @@
 #include "algorithms/coap/coap.h"
 
 //#define DEBUG_COAP
+#ifdef DEBUG_COAP
+#define DBG_C(X) X
+#else
+#define DBG_C(X)
+#endif
 
 #define TEMP_RESOURCE "temp"
 #define LIGHT_RESOURCE "light"
@@ -77,6 +82,7 @@ class iSenseCoapCollectorApp:
          debug_ = &wiselib::FacetProvider<Os, Os::Debug>::get_facet( value );
          rand_ = &wiselib::FacetProvider<Os, Os::Rand>::get_facet( value );
          clock_ = &wiselib::FacetProvider<Os, Os::Clock>::get_facet( value );
+         uart_ = &wiselib::FacetProvider<Os, Os::Uart>::get_facet( value );
 
          radio_->set_channel( 12 );
 #ifdef CORE_COLLECTOR
@@ -98,28 +104,31 @@ class iSenseCoapCollectorApp:
 #endif
 
 #ifdef SOLAR_COLLECTOR
-        //debug_->debug("set timer");
-        ((isense::Os *) ospointer)->allow_sleep(false);
+         //debug_->debug("set timer");
+         ( ( isense::Os * ) ospointer )->allow_sleep( false );
 
-        ((isense::Os *) ospointer)->allow_doze(false);
+         ( ( isense::Os * ) ospointer )->allow_doze( false );
 
-        timer_->set_timer<iSenseCoapCollectorApp, &iSenseCoapCollectorApp::read_solar_sensors > (5000, this, (void*) TASK_WAKE);
+         timer_->set_timer<iSenseCoapCollectorApp, &iSenseCoapCollectorApp::read_solar_sensors > ( 5000, this, ( void* ) TASK_WAKE );
 #endif
          //flooding algorithm init
          flooding_.init( *radio_, *debug_ );
          flooding_.enable_radio();
          flooding_.reg_recv_callback<iSenseCoapCollectorApp, &iSenseCoapCollectorApp::receive_flooding_message>( this );
-
+         radio_->enable_radio();
          // coap init
          rand_->srand( radio_->id() );
          mid_ = ( uint16_t ) rand_->operator()( 65536 / 2 );
-         debug_->debug( "iSense CoAP Collector App" );
+         debug_->debug( "iSense CoAP Collector App %x", radio_->id() );
          add_resources();
-         coap_.init( &flooding_, *timer_, *debug_, *clock_, mid_ );
+         coap_.init( &flooding_, *timer_, *debug_, *clock_, mid_, *uart_ );
          radio_->reg_recv_callback<iSenseCoapCollectorApp, &iSenseCoapCollectorApp::receive_radio_message > ( this );
 
+         uart_->reg_read_callback<iSenseCoapCollectorApp, &iSenseCoapCollectorApp::handle_uart_msg > ( this );
+         uart_->enable_serial_comm();
+
 #ifdef I_AM_ALIVE
-         timer_->set_timer<iSenseCoapCollectorApp, &iSenseCoapCollectorApp::broadcast>( 60000, this, 0 );
+         timer_->set_timer<iSenseCoapCollectorApp, &iSenseCoapCollectorApp::broadcast>( 5000, this, 0 );
          alive_broadcast_ = true;
 #endif
       }
@@ -137,27 +146,54 @@ class iSenseCoapCollectorApp:
 #endif
       void receive_flooding_message( Os::Radio::node_id_t from, Os::Radio::size_t len, Os::Radio::block_data_t *buf )
       {
-         debug_->debug( "received flooding at %x from %x with length: %d", radio_->id(), from, len );
+         //debug_->debug( "received flooding at %x from %x with length: %d", radio_->id(), from, len );
          if ( buf[0] == WISELIB_MID_COAP ) {
-            debug_->debug( "Received CoAP message from iSense: %x with length: %d", from, len );
-            coap_.receiver( &len, buf, &from );
+            DBG_C(debug_->debug( "FLOODING A CoAP message from iSense: %x with length: %d", from, len ));
+            coap_.receiver( &len, buf, from );
          }
-         //coap_.receiver( &len, buf, &from );
+         if ( buf[0] == WISELIB_MID_COAP_RESP ) {
+            DBG_C(debug_->debug( "FLOODING B CoAP message from iSense: %x with length: %d", from, len ));
+            //coap_.receiver( &len, buf, from );
+            coap_.debug_hex( buf, len );
+         }
       }
       void receive_radio_message( Os::Radio::node_id_t from, Os::Radio::size_t len, Os::Radio::block_data_t *buf ) {
          if ( buf[0] == WISELIB_MID_COAP ) {
-            debug_->debug( "Received CoAP message from iSense: %x with length: %d", from, len );
-#ifdef DEBUG_COAP
-            debug_hex( buf, len );
-#endif
-            coap_.receiver( &len, buf, &from );
+            DBG_C(debug_->debug( "NORMAL CoAP message from iSense: %x with length: %d", from, len ));
+            //coap_.debug_hex( buf, len );
+            //coap_.receiver( &len, buf, from );
          }
          else if ( buf[0] == 0x7f && buf[1] == 0x69 && buf[2] == 112 && buf[3] == WISELIB_MID_COAP ) {
-            debug_->debug( "Received CoAP message from xbee: %x with length: %d", from, len );
-#ifdef DEBUG_COAP
-            debug_hex( buf, len );
-#endif
-            //coap_.receiver( &len, &buf[3], &from );
+            DBG_C(debug_->debug( "NORMAL CoAP message from xbee: %x with length: %d", from, len ));
+            coap_.debug_hex( &buf[3], len-3 );
+            //coap_.receiver( &len, &buf[3], from );
+         }
+      }
+
+      void handle_uart_msg( Os::Uart::size_t len, Os::Uart::block_data_t *buf ) {
+         if ( buf[2] == WISELIB_MID_COAP ) {
+            uint16_t *dest = ( uint16_t* )buf;
+            DBG_C(debug_->debug( "UART CoAP message with length: %d dest: %x", len, *dest ));
+            if ( *dest == radio_->id() )
+            {
+               DBG_C(debug_->debug( "A" ));
+               len -= 2;
+               coap_.receiver( &len, &buf[2], radio_->id() );
+            }
+            else
+            {
+               DBG_C(debug_->debug( "B"));
+               //flooding_.send( *dest, len - 2, &buf[2] );
+               // arduino part
+               Os::Radio::block_data_t buf_arduino[Os::Radio::MAX_MESSAGE_LENGTH];
+               buf_arduino[0] = 0x7f;
+               buf_arduino[1] = 0x69;
+               buf_arduino[2] = 112;
+               //buf_arduino[3] = WISELIB_MID_COAP;
+               memcpy( &buf_arduino[3], &buf[2], len - 2 );
+               //coap_.debug_hex( buf_arduino, len+1);
+               radio_->send( *dest, len + 1, buf_arduino );
+            }
          }
       }
 
@@ -187,71 +223,71 @@ class iSenseCoapCollectorApp:
 #ifdef CORE_COLLECTOR
          resource_t core_resource( "led", GET | POST, true, 0, TEXT_PLAIN );
          core_resource.reg_callback<iSenseCoapCollectorApp, &iSenseCoapCollectorApp::led>( this );
-         coap_.add_resource( core_resource );
+         coap_.add_resource( &core_resource );
 #endif
 #ifdef ENVIRONMENTAL_COLLECTOR
-         resource_t new_resource( TEMP_RESOURCE, GET, true, 120, TEXT_PLAIN );
+         resource_t new_resource( TEMP_RESOURCE, GET, true, 60, TEXT_PLAIN );
          new_resource.reg_callback<iSenseCoapCollectorApp, &iSenseCoapCollectorApp::get_temp>( this );
-         coap_.add_resource( new_resource );
+         coap_.add_resource( &new_resource );
 
          resource_t new_resource2( LIGHT_RESOURCE, GET, true, 60, TEXT_PLAIN );
          new_resource2.reg_callback<iSenseCoapCollectorApp, &iSenseCoapCollectorApp::get_light>( this );
-         coap_.add_resource( new_resource2 );
+         coap_.add_resource( &new_resource2 );
 #endif
 
 #ifdef WEATHER_COLLECTOR
-         resource_t new_resource3( "temp", GET, true, 120, TEXT_PLAIN );
+         resource_t new_resource3( "temp", GET, true, 60, TEXT_PLAIN );
          new_resource3.reg_callback<iSenseCoapCollectorApp, &iSenseCoapCollectorApp::get_weather_temp>( this );
-         coap_.add_resource( new_resource3 );
+         coap_.add_resource( &new_resource3 );
 
          resource_t new_resource4( "bpressure", GET, true, 60, TEXT_PLAIN );
          new_resource4.reg_callback<iSenseCoapCollectorApp, &iSenseCoapCollectorApp::get_weather_bar>( this );
-         coap_.add_resource( new_resource4 );
+         coap_.add_resource( &new_resource4 );
 #endif
 
 #ifdef SOLAR_COLLECTOR
-         resource_t new_resource5( "capacity", GET, true, 120, TEXT_PLAIN );
+         resource_t new_resource5( "capacity", GET, true, 60, TEXT_PLAIN );
          new_resource5.reg_callback<iSenseCoapCollectorApp, &iSenseCoapCollectorApp::solar_charge>( this );
-         coap_.add_resource( new_resource5 );
+         coap_.add_resource( &new_resource5 );
 
          resource_t new_resource6( "voltage", GET, true, 60, TEXT_PLAIN );
          new_resource6.reg_callback<iSenseCoapCollectorApp, &iSenseCoapCollectorApp::solar_voltage>( this );
-         coap_.add_resource( new_resource6 );
+         coap_.add_resource( &new_resource6 );
 
-         resource_t new_resource7( "current", GET, true, 120, TEXT_PLAIN );
+         resource_t new_resource7( "current", GET, true, 60, TEXT_PLAIN );
          new_resource7.reg_callback<iSenseCoapCollectorApp, &iSenseCoapCollectorApp::solar_current>( this );
-         coap_.add_resource( new_resource7 );
+         coap_.add_resource( &new_resource7 );
 
          resource_t new_resource8( "duty_cycle", GET, true, 60, TEXT_PLAIN );
          new_resource8.reg_callback<iSenseCoapCollectorApp, &iSenseCoapCollectorApp::solar_duty_cycle>( this );
-         coap_.add_resource( new_resource8 );
+         coap_.add_resource( &new_resource8 );
 #endif
 
 #ifdef SECURITY_COLLECTOR
          resource_t new_resource9( PIR_RESOURCE, GET, true, 10, TEXT_PLAIN );
          new_resource9.reg_callback<iSenseCoapCollectorApp, &iSenseCoapCollectorApp::security_pir>( this );
-         coap_.add_resource( new_resource9 );
+         coap_.add_resource( &new_resource9 );
 #endif
 
 #ifdef HELLO_RESOURCE
-         resource_t hello_resource( "hello_world", GET, true, 0, TEXT_PLAIN );
+         resource_t hello_resource( "hello_world", GET, true, 5, TEXT_PLAIN );
          hello_resource.reg_callback<iSenseCoapCollectorApp, &iSenseCoapCollectorApp::hello>( this );
-         coap_.add_resource( hello_resource );
+         coap_.add_resource( &hello_resource );
 #endif
-#ifdef I_AM_ALIVE
+#ifdef I_AM_ALIVE_RESOURCE
          resource_t alive_resource( "alive", GET | POST, true, 0, TEXT_PLAIN );
          alive_resource.reg_callback<iSenseCoapCollectorApp, &iSenseCoapCollectorApp::alive_broadcast>( this );
-         coap_.add_resource( alive_resource );
+         coap_.add_resource( &alive_resource );
 #endif
 #ifdef LARGE_RESOURCE
          resource_t large_resource( "large", GET, true, 0, TEXT_PLAIN );
          large_resource.reg_callback<iSenseCoapCollectorApp, &iSenseCoapCollectorApp::large>( this );
-         coap_.add_resource( large_resource );
+         coap_.add_resource( &large_resource );
 #endif
 #ifdef URI_QUERY_TEST
          resource_t query_resource( "uri_query", GET, true, 0, TEXT_PLAIN );
          query_resource.reg_callback<iSenseCoapCollectorApp, &iSenseCoapCollectorApp::uri_query>( this );
-         coap_.add_resource( query_resource );
+         coap_.add_resource( &query_resource );
 #endif
       }
 
@@ -285,11 +321,11 @@ class iSenseCoapCollectorApp:
             if ( em_->light_sensor()->enable() ) {
                em_->light_sensor()->set_data_handler( this );
                //os().add_task_in(Time(10, 0), this, (void*) TASK_SET_LIGHT_THRESHOLD);
-               debug_->debug( "em light" );
+               DBG_C(debug_->debug( "em light" ));
             }
             if ( em_->temp_sensor()->enable() ) {
                em_->temp_sensor()->set_data_handler( this );
-               debug_->debug( "em temp" );
+               DBG_C(debug_->debug( "em temp" ));
             }
          }
       }
@@ -326,7 +362,7 @@ class iSenseCoapCollectorApp:
 
 #ifdef SOLAR_COLLECTOR
       void init_solar_module( Os::AppMainParameter& value ) {
-         debug_->debug( "init_solar_module" );
+         DBG_C(debug_->debug( "init_solar_module" ));
          // create SolarModule instance
          sm_ = new isense::SolarModule( value );
 
@@ -367,6 +403,7 @@ class iSenseCoapCollectorApp:
             }
             return NOT_IMPLEMENTED;
          }
+         return INTERNAL_SERVER_ERROR;
       }
 #endif
 #ifdef ENVIRONMENTAL_COLLECTOR
@@ -374,7 +411,7 @@ class iSenseCoapCollectorApp:
          if( args->method == COAP_GET )  {
             //int temp = 0;
             int8_t temp = em_->temp_sensor()->temperature();
-            debug_->debug( "temperature = %i °C", temp );
+            DBG_C(debug_->debug( "temperature = %i °C", temp ));
             *( args->output_data_len ) = sprintf( ( char* )args->output_data, "%d\0" , temp );
             return CONTENT;
          }
@@ -383,7 +420,7 @@ class iSenseCoapCollectorApp:
       coap_status_t get_light( callback_arg_t* args ) {
          if( args->method == COAP_GET ) {
             uint32_t lux = em_->light_sensor()->luminance();
-            debug_->debug( "luminance = %d lux", lux );
+            DBG_C(debug_->debug( "luminance = %d lux", lux ));
             *( args->output_data_len ) = sprintf( ( char* )args->output_data, "%d\0", lux );
             return CONTENT;
          }
@@ -482,26 +519,26 @@ class iSenseCoapCollectorApp:
          return INTERNAL_SERVER_ERROR;
       }
 #endif
-#ifdef I_AM_ALIVE
+#ifdef I_AM_ALIVE_RESOURCE
       coap_status_t alive_broadcast( callback_arg_t* args ) {
          if( args->method == COAP_GET ) {
             if ( alive_broadcast_ == true )
-               *( args->output_data_len ) = sprintf( ( char* )args->output_data, "I am alive message is sent every 60s (to disable POST:0)" );
+               *( args->output_data_len ) = sprintf( ( char* )args->output_data, "disable POST:0" );
             else
-               *( args->output_data_len ) = sprintf( ( char* )args->output_data, "I am alive message is disabled (to enable POST:1)" );
+               *( args->output_data_len ) = sprintf( ( char* )args->output_data, "enable POST:1" );
             return CONTENT;
          }
          else if ( args->method == COAP_POST ) {
             if ( ( *( args->input_data ) == 0x30 ) && ( alive_broadcast_ == true ) )
             {
                alive_broadcast_ = 0;
-               *( args->output_data_len ) = sprintf( ( char* )args->output_data, "I am alive message disabled" );
+               *( args->output_data_len ) = sprintf( ( char* )args->output_data, "disabled" );
                return CHANGED;
             }
             else if ( ( *args->input_data == 0x31 ) && ( alive_broadcast_ == false ) )
             {
                alive_broadcast_ = 1;
-               *( args->output_data_len ) = sprintf( ( char* )args->output_data, "I am alive message enabled" );
+               *( args->output_data_len ) = sprintf( ( char* )args->output_data, "enabled" );
                return CHANGED;
             }
             return NOT_IMPLEMENTED;
@@ -546,36 +583,27 @@ class iSenseCoapCollectorApp:
       void broadcast( void* ) {
          if ( alive_broadcast_ == true )
          {
-            debug_->debug( "** I AM ALIVE **" );
-            block_data_t buf[CONF_MAX_MSG_LEN];
-            buf[0] = 0x7f;
-            buf[1] = 0x69;
-            buf[2] = 112;
-            buf[3] = WISELIB_MID_COAP;
-            buf[4] = 1;
-            radio_->send( Os::Radio::BROADCAST_ADDRESS, 5 , buf );
+            //DBG_C(debug_->debug( "** I AM ALIVE **" ));
+            block_data_t buf[11];
+            //buf[0] = 0x7f;
+            //buf[1] = 0x69;
+            //buf[2] = 112;
+            buf[0] = WISELIB_MID_COAP_RESP;
+            buf[1] = (radio_->id() & 0xFF00) >> 8 ;
+            buf[2] = radio_->id() & 0x00FF;
+            strcpy((char*)&buf[3], "hereiam");
+            //_->send( Os::Radio::BROADCAST_ADDRESS, 13 , buf );
+            //coap_.debug_hex(buf, 10);
+            flooding_.send( Os::Radio::BROADCAST_ADDRESS, 10 , buf );
+
          }
          timer_->set_timer<iSenseCoapCollectorApp, &iSenseCoapCollectorApp::broadcast>( 60000, this, 0 );
       }
 #endif
 
-#ifdef DEBUG_COAP
-      void debug_hex( const uint8_t * payload, size_t length ) {
-         char buffer[2048];
-         int bytes_written = 0;
-         bytes_written += sprintf( buffer + bytes_written, "DATA:!" );
-         for ( size_t i = 0; i < length; i++ ) {
-            bytes_written += sprintf( buffer + bytes_written, "%x!", payload[i] );
-         }
-         bytes_written += sprintf( buffer + bytes_written, "" );
-         buffer[bytes_written] = '\0';
-         debug_->debug( "%s", buffer );
-      }
-#endif
-
 #ifdef SOLAR_COLLECTOR
       void read_solar_sensors( void* userdata ) {
-         debug_->debug( "read_solar_sensors" );
+         DBG_C(debug_->debug( "read_solar_sensors" ));
          if ( ( uint32 ) userdata == TASK_WAKE ) {
             // register as a task to wake up again in one minute
             // the below call equals calling
@@ -639,7 +667,7 @@ class iSenseCoapCollectorApp:
            * Reports the Reading to the Gateway
            */
       virtual void handle_sensor() {
-         debug_->debug( "pir event" );
+         DBG_C(debug_->debug( "pir event" ));
          pir_timestamp_ = clock_->time();
          coap_.coap_notify_from_interrupt( PIR_RESOURCE );
       }
@@ -650,6 +678,7 @@ class iSenseCoapCollectorApp:
       Os::Debug::self_pointer_t debug_;
       Os::Clock::self_pointer_t clock_;
       Os::Rand::self_pointer_t rand_;
+      Os::Uart::self_pointer_t uart_;
       flooding_algorithm_t flooding_;
       coap_t coap_;
       uint16_t mid_;
