@@ -117,7 +117,7 @@ public:
 
         timer_->set_timer<iSenseCoapCollectorApp, &iSenseCoapCollectorApp::read_solar_sensors > (5000, this, (void*) TASK_WAKE);
 #endif
-#ifdef USE_FLOODING 
+#ifdef USE_FLOODING
         //flooding algorithm init
         flooding_.init(*radio_, *debug_);
         flooding_.enable_radio();
@@ -129,7 +129,7 @@ public:
         mid_ = (uint16_t) rand_->operator()(65536 / 2);
         debug_->debug("iSense CoAP Collector App %x", radio_->id());
         add_resources();
-#ifdef USE_FLOODING 
+#ifdef USE_FLOODING
         coap_.init(&flooding_, *timer_, *debug_, *clock_, mid_, *uart_);
 #else
         coap_.init(*radio_, *timer_, *debug_, *clock_, mid_, *uart_);
@@ -234,16 +234,16 @@ public:
                  }
          */
 #ifdef CORE_COLLECTOR
-        resource_t core_resource("led", GET | POST, true, 60, TEXT_PLAIN);
+        resource_t core_resource("led", GET | POST, true, 180, TEXT_PLAIN);
         core_resource.reg_callback<iSenseCoapCollectorApp, &iSenseCoapCollectorApp::led > (this);
         coap_.add_resource(&core_resource);
 #endif
 #ifdef ENVIRONMENTAL_COLLECTOR
-        resource_t new_resource(TEMP_RESOURCE, GET, true, 60, TEXT_PLAIN);
+        resource_t new_resource(TEMP_RESOURCE, GET, true, 120, TEXT_PLAIN);
         new_resource.reg_callback<iSenseCoapCollectorApp, &iSenseCoapCollectorApp::get_temp > (this);
         coap_.add_resource(&new_resource);
 
-        resource_t new_resource2(LIGHT_RESOURCE, GET, true, 60, TEXT_PLAIN);
+        resource_t new_resource2(LIGHT_RESOURCE, GET, true, 120, TEXT_PLAIN);
         new_resource2.reg_callback<iSenseCoapCollectorApp, &iSenseCoapCollectorApp::get_light > (this);
         coap_.add_resource(&new_resource2);
 #endif
@@ -279,7 +279,7 @@ public:
 
 #ifdef SECURITY_COLLECTOR
         if (pir_ != NULL) {
-            resource_t new_resource9(PIR_RESOURCE, GET, true, 30, TEXT_PLAIN);
+            resource_t new_resource9(PIR_RESOURCE, GET, true, 20, TEXT_PLAIN);
             new_resource9.reg_callback<iSenseCoapCollectorApp, &iSenseCoapCollectorApp::security_pir > (this);
             coap_.add_resource(&new_resource9);
         }
@@ -702,7 +702,7 @@ private:
     Os::Clock::self_pointer_t clock_;
     Os::Rand::self_pointer_t rand_;
     Os::Uart::self_pointer_t uart_;
-#ifdef USE_FLOODING 
+#ifdef USE_FLOODING
     flooding_algorithm_t flooding_;
 #endif
     coap_t coap_;
