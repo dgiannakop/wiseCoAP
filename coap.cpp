@@ -11,9 +11,9 @@
 #undef USE_ROUTING
 
 //Uncomment to enable the isense module
-//#define CORE_COLLECTOR
-#define ENVIRONMENTAL_COLLECTOR
-//#define SECURITY_COLLECTOR
+#define CORE_COLLECTOR
+//#define ENVIRONMENTAL_COLLECTOR
+#define SECURITY_COLLECTOR
 //#define SOLAR_COLLECTOR
 //#define WEATHER_COLLECTOR
 
@@ -90,7 +90,7 @@ public:
         clock_ = &wiselib::FacetProvider<Os, Os::Clock>::get_facet(value);
         //        uart_ = &wiselib::FacetProvider<Os, Os::Uart>::get_facet(value);
 
-        radio_->set_channel(12);
+        radio_->set_channel(13);
 #ifdef CORE_COLLECTOR
         cm_ = new isense::CoreModule(value);
         led_status_ = 0;
@@ -146,7 +146,7 @@ public:
 
 #ifdef I_AM_ALIVE
         timer_->set_timer<iSenseCoapCollectorApp, &iSenseCoapCollectorApp::broadcast > (10000, this, 0);
-        alive_broadcast_ = true;
+        //alive_broadcast_ = true;
 #endif
     }
 
@@ -236,48 +236,48 @@ public:
     //    }
 
     void add_resources() {
-        resource_t parent_resource("parent", GET, true, 180, TEXT_PLAIN);
+        resource_t parent_resource("parent", GET, true, 60, TEXT_PLAIN);
         parent_resource.reg_callback<iSenseCoapCollectorApp, &iSenseCoapCollectorApp::parent > (this);
         coap_.add_resource(&parent_resource);
 #ifdef CORE_COLLECTOR
-        resource_t core_resource("led", GET | POST, true, 600, TEXT_PLAIN);
+        resource_t core_resource("led", GET | POST, true, 60, TEXT_PLAIN);
         core_resource.reg_callback<iSenseCoapCollectorApp, &iSenseCoapCollectorApp::led > (this);
         coap_.add_resource(&core_resource);
 #endif
 #ifdef ENVIRONMENTAL_COLLECTOR
-        resource_t new_resource(TEMP_RESOURCE, GET, true, 300, TEXT_PLAIN);
+        resource_t new_resource(TEMP_RESOURCE, GET, true, 60, TEXT_PLAIN);
         new_resource.reg_callback<iSenseCoapCollectorApp, &iSenseCoapCollectorApp::get_temp > (this);
         coap_.add_resource(&new_resource);
 
-        resource_t new_resource2(LIGHT_RESOURCE, GET, true, 300, TEXT_PLAIN);
+        resource_t new_resource2(LIGHT_RESOURCE, GET, true, 60, TEXT_PLAIN);
         new_resource2.reg_callback<iSenseCoapCollectorApp, &iSenseCoapCollectorApp::get_light > (this);
         coap_.add_resource(&new_resource2);
 #endif
 
 #ifdef WEATHER_COLLECTOR
-        resource_t new_resource3(TEMP_RESOURCE, GET, true, 300, TEXT_PLAIN);
+        resource_t new_resource3(TEMP_RESOURCE, GET, true, 60, TEXT_PLAIN);
         new_resource3.reg_callback<iSenseCoapCollectorApp, &iSenseCoapCollectorApp::get_weather_temp > (this);
         coap_.add_resource(&new_resource3);
 
-        resource_t new_resource4("bpressure", GET, true, 300, TEXT_PLAIN);
+        resource_t new_resource4("bpressure", GET, true, 60, TEXT_PLAIN);
         new_resource4.reg_callback<iSenseCoapCollectorApp, &iSenseCoapCollectorApp::get_weather_bar > (this);
         coap_.add_resource(&new_resource4);
 #endif
 
 #ifdef SOLAR_COLLECTOR
-        resource_t new_resource5("capacity", GET, true, 300, TEXT_PLAIN);
+        resource_t new_resource5("capacity", GET, true, 60, TEXT_PLAIN);
         new_resource5.reg_callback<iSenseCoapCollectorApp, &iSenseCoapCollectorApp::solar_charge > (this);
         coap_.add_resource(&new_resource5);
 
-        resource_t new_resource6("voltage", GET, true, 300, TEXT_PLAIN);
+        resource_t new_resource6("voltage", GET, true, 60, TEXT_PLAIN);
         new_resource6.reg_callback<iSenseCoapCollectorApp, &iSenseCoapCollectorApp::solar_voltage > (this);
         coap_.add_resource(&new_resource6);
 
-        resource_t new_resource7("current", GET, true, 300, TEXT_PLAIN);
+        resource_t new_resource7("current", GET, true, 60, TEXT_PLAIN);
         new_resource7.reg_callback<iSenseCoapCollectorApp, &iSenseCoapCollectorApp::solar_current > (this);
         coap_.add_resource(&new_resource7);
 
-        resource_t new_resource8("duty_cycle", GET, true, 300, TEXT_PLAIN);
+        resource_t new_resource8("duty_cycle", GET, true, 60, TEXT_PLAIN);
         new_resource8.reg_callback<iSenseCoapCollectorApp, &iSenseCoapCollectorApp::solar_duty_cycle > (this);
         coap_.add_resource(&new_resource8);
 
@@ -285,7 +285,7 @@ public:
 
 #ifdef SECURITY_COLLECTOR
         if (pir_ != NULL) {
-            resource_t new_resource9(PIR_RESOURCE, GET, true, 300, TEXT_PLAIN);
+            resource_t new_resource9(PIR_RESOURCE, GET, true, 60, TEXT_PLAIN);
             new_resource9.reg_callback<iSenseCoapCollectorApp, &iSenseCoapCollectorApp::security_pir > (this);
             coap_.add_resource(&new_resource9);
         }
@@ -552,7 +552,7 @@ public:
     }
 #endif
 #ifdef I_AM_ALIVE_RESOURCE
-
+/*
     coap_status_t alive_broadcast(callback_arg_t* args) {
         if (args->method == COAP_GET) {
             if (alive_broadcast_ == true)
@@ -574,6 +574,7 @@ public:
         }
         return INTERNAL_SERVER_ERROR;
     }
+*/
 #endif
 #ifdef LARGE_RESOURCE
 
@@ -620,7 +621,15 @@ public:
             //            buf[0] = WISELIB_MID_COAP_RESP;
             //            buf[1] = (radio_->id() & 0xFF00) >> 8;
             //            buf[2] = radio_->id() & 0x00FF;
-            strcpy((char*) buf, "hereiam");
+            //strcpy((char*) buf, "hereiam");
+            	buf[0]='h';
+            	buf[1]='e';
+            	buf[2]='r';
+            	buf[3]='e';
+            	buf[4]='i';
+            	buf[5]='a';
+            	buf[6]='m';
+            	buf[7]='\0';
             //_->send( Os::Radio::BROADCAST_ADDRESS, 13 , buf );
             //coap_.debug_hex(buf, 10);
             routing_.send(Os::Radio::BROADCAST_ADDRESS, 7, buf);
